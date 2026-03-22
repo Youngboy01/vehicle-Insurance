@@ -1,14 +1,22 @@
 [project]
-name = "vehicle-insurance"
+name = "vehicle_insurance"
 version = "0.1.0"
-description = "Add your description here"
+description = "Vehicle Insurance MLOps Project"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "ipykernel>=7.2.0",
-    "matplotlib>=3.10.8",
-    "numpy>=2.4.3",
-    "pandas>=3.0.1",
-    "scikit-learn>=1.8.0",
-    "seaborn>=0.13.2",
+    "matplotlib>=3.8.0",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "pymongo>=4.6.0",
+    "scikit-learn>=1.4.0",
+    "seaborn>=0.13.0",
 ]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
