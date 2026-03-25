@@ -105,3 +105,27 @@ Pipfile.lock
 
 # Coverage
 coverage/
+
+# -------------------------
+# MLflow
+# -------------------------
+mlruns/
+mlartifacts/
+mlflow.db
+
+# If using local MLflow tracking server
+mlflow/
+*.db
+
+# -------------------------
+# Model artifacts
+# -------------------------
+models/
+artifacts/
+checkpoints/
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+*.onnx

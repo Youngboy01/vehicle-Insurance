@@ -5,8 +5,11 @@ description = "Vehicle Insurance MLOps Project"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
+    "imblearn>=0.0",
     "ipykernel>=7.2.0",
+    "lightgbm>=4.6.0",
     "matplotlib>=3.8.0",
+    "mlflow>=3.10.1",
     "numpy>=1.26.0",
     "pandas>=2.2.0",
     "pymongo>=4.6.0",
