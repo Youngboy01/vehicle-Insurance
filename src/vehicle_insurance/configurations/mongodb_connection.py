@@ -28,8 +28,9 @@ class MongoDBConnection:
                 MongoDBConnection.client = pymongo.MongoClient(
                     mongodb_url, tlsCAFile=certi
                 )
-
-            self.database = MongoDBConnection.client[database_name]
+                
+            self.client = MongoDBConnection.client
+            self.database = self.client[database_name]
             logger.info(f"Connected to MongoDB database: {database_name}")
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e
