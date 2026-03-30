@@ -129,3 +129,10 @@ checkpoints/
 *.pt
 *.pth
 *.onnx
+
+# Pipeline Artifacts and Logs
+artifact/
+logs/
+*.csv
+
+demo.py

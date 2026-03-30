@@ -5,6 +5,7 @@ description = "Vehicle Insurance MLOps Project"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
+    "dotenv>=0.9.9",
     "imblearn>=0.0",
     "ipykernel>=7.2.0",
     "lightgbm>=4.6.0",
@@ -15,6 +16,7 @@ dependencies = [
     "pymongo>=4.6.0",
     "scikit-learn>=1.4.0",
     "seaborn>=0.13.0",
+    "setuptools>=82.0.1",
 ]
 
 [build-system]
