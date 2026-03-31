@@ -1,0 +1,10 @@
+drop_columns:
+  - id
+
+# for data transformation
+num_features:
+  - Age
+  - Vintage
+
+mm_columns:
+  - Annual_Premium
