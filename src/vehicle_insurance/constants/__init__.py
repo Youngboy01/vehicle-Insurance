@@ -30,3 +30,13 @@ DATA_TRANSFORMATION_TRANSFORMED_TRAIN_FILE_NAME: str = "train.npy"
 DATA_TRANSFORMATION_TRANSFORMED_TEST_FILE_NAME: str = "test.npy"
 DATA_TRANSFORMATION_TRANSFORMER_OBJECT_FILE_NAME: str = "preprocessor.pkl"
 TARGET_COLUMN: str = "Response"
+
+
+# model trainer related constants
+MODEL_TRAINER_DIR_NAME: str = "model_trainer"
+MODEL_TRAINER_TRAINED_MODEL_FILE_NAME: str = "model.pkl"
+MODEL_TRAINER_METRICS_FILE_NAME: str = "metrics.json"
+MODEL_TRAINER_EXPERIMENT_PKL_PATH: str = os.path.join(
+    "artifacts", "models", "best_model_Round3_ClassWeight_LightGBM_is_unbalance.pkl"
+)
+MODEL_TRAINER_EXPECTED_SCORE: float = 0.7

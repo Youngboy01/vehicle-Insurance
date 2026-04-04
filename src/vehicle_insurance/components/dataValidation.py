@@ -108,10 +108,10 @@ class DataValidation:
                 validation_error_msg += "Testing data validation successful."
 
             validation_status = is_train_valid and is_test_valid
-            report_dir = os.path.join(
-                self.data_validation_config.data_validation_dir, "report"
+            os.makedirs(
+                os.path.dirname(self.data_validation_config.report_file_path),
+                exist_ok=True,
             )
-            os.makedirs(report_dir, exist_ok=True)
             validation_report = {
                 "training_data": {"is_valid": is_train_valid, "errors": train_errors},
                 "testing_data": {"is_valid": is_test_valid, "errors": test_errors},

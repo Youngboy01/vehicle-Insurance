@@ -40,7 +40,7 @@ class DataValidationConfig:
         training_pipeline_config.artifact_dir, DATA_VALIDATION_DIR_NAME
     )
     report_file_path: str = os.path.join(
-        data_validation_dir, DATA_VALIDATION_REPORT_FILE_NAME
+        data_validation_dir, "report" ,DATA_VALIDATION_REPORT_FILE_NAME
     )
 
 
@@ -62,3 +62,18 @@ class DataTransformationConfig:
     transformer_object_file_path: str = os.path.join(
         data_transformation_dir, DATA_TRANSFORMATION_TRANSFORMER_OBJECT_FILE_NAME
     )
+
+
+@dataclass
+class ModelTrainerConfig:
+    model_trainer_dir: str = os.path.join(
+        training_pipeline_config.artifact_dir, MODEL_TRAINER_DIR_NAME
+    )
+    trained_model_file_path: str = os.path.join(
+        model_trainer_dir, MODEL_TRAINER_TRAINED_MODEL_FILE_NAME
+    )
+    metrics_file_path: str = os.path.join(
+        model_trainer_dir, MODEL_TRAINER_METRICS_FILE_NAME
+    )
+    experiment_pkl_path: str = MODEL_TRAINER_EXPERIMENT_PKL_PATH
+    expected_score: float = MODEL_TRAINER_EXPECTED_SCORE
