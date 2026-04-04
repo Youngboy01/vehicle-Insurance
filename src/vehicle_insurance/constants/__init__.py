@@ -22,3 +22,11 @@ DATA_INGESTION_TRAIN_TEST_SPLIT_RATIO: float = 0.25
 # data validation related constants
 DATA_VALIDATION_DIR_NAME: str = "data_validation"
 DATA_VALIDATION_REPORT_FILE_NAME: str = "report.yaml"
+
+# data transformation related constants
+DATA_TRANSFORMATION_DIR_NAME: str = "data_transformation"
+DATA_TRANSFORMATION_TRANSFORMED_DATA_DIR: str = "transformed_data"
+DATA_TRANSFORMATION_TRANSFORMED_TRAIN_FILE_NAME: str = "train.npy"
+DATA_TRANSFORMATION_TRANSFORMED_TEST_FILE_NAME: str = "test.npy"
+DATA_TRANSFORMATION_TRANSFORMER_OBJECT_FILE_NAME: str = "preprocessor.pkl"
+TARGET_COLUMN: str = "Response"

@@ -6,5 +6,12 @@ num_features:
   - Age
   - Vintage
 
-mm_columns:
+#for using robust scaler
+rs_columns:
   - Annual_Premium
+
+# for using one hot encoding
+cat_features:
+  - Gender
+  - Vehicle_Age
+  - Vehicle_Damage

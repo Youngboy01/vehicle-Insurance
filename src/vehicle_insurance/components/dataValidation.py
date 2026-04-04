@@ -108,17 +108,10 @@ class DataValidation:
                 validation_error_msg += "Testing data validation successful."
 
             validation_status = is_train_valid and is_test_valid
-            data_validation_artifact = DataValidationArtifact(
-                report_file_path=self.data_validation_config.report_file_path,
-                message=validation_error_msg,
-                status=validation_status,
-            )
-
             report_dir = os.path.join(
                 self.data_validation_config.data_validation_dir, "report"
             )
             os.makedirs(report_dir, exist_ok=True)
-
             validation_report = {
                 "training_data": {"is_valid": is_train_valid, "errors": train_errors},
                 "testing_data": {"is_valid": is_test_valid, "errors": test_errors},
@@ -127,6 +120,12 @@ class DataValidation:
             }
             with open(self.data_validation_config.report_file_path, "w") as report_file:
                 json.dump(validation_report, report_file)
+
+            data_validation_artifact = DataValidationArtifact(
+                report_file_path=self.data_validation_config.report_file_path,
+                message=validation_error_msg,
+                status=validation_status,
+            )
 
             logger.info("Data validation process completed.")
             logger.info(
