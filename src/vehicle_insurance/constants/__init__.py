@@ -39,4 +39,13 @@ MODEL_TRAINER_METRICS_FILE_NAME: str = "metrics.json"
 MODEL_TRAINER_EXPERIMENT_PKL_PATH: str = os.path.join(
     "artifacts", "models", "best_model_Round3_ClassWeight_LightGBM_is_unbalance.pkl"
 )
-MODEL_TRAINER_EXPECTED_SCORE: float = 0.7
+MODEL_TRAINER_EXPECTED_SCORE: float = 0.75
+
+# mlflow related constants
+MLFLOW_TRACKING_URI_KEY: str = "MLFLOW_TRACKING_URI"
+MLFLOW_TRACKING_USERNAME_KEY: str = "MLFLOW_TRACKING_USERNAME"
+MLFLOW_TRACKING_PASSWORD_KEY: str = "MLFLOW_TRACKING_PASSWORD"
+MLFLOW_EXPERIMENT_NAME: str = "Vehicle_Insurance"
+MLFLOW_REGISTER_MODEL_NAME: str = "Vehicle_Insurance_LGBM"
+MLFLOW_STAGING_STAGE: str = "Staging"
+MLFLOW_PRODUCTION_STAGE: str = "Production"

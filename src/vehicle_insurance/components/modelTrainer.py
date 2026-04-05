@@ -10,18 +10,21 @@ from sklearn.metrics import (
     precision_score,
     f1_score,
 )
-
+import mlflow
+import mlflow.lightgbm
 from vehicle_insurance.entities.config_entity import ModelTrainerConfig
 from vehicle_insurance.entities.artifact_entity import (
     DataTransformationArtifact,
     ModelTrainerArtifact,
 )
+from vehicle_insurance.constants import *
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
 from vehicle_insurance.utils import (
     load_object,
     load_numpy_array_data,
     save_object,
+    get_mlflow_client,
 )
 
 logger = setup_logger()
@@ -64,6 +67,20 @@ class ModelTrainer:
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e
 
+    def _set_up_mlflow(self):
+        try:
+            tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+            if not tracking_uri:
+                raise ValueError(
+                    "MLFLOW_TRACKING_URI is not set in environment variables."
+                )
+            mlflow.set_tracking_uri(tracking_uri)
+            mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+            logger.info(f"MLflow tracking URI set to: {tracking_uri}")
+            logger.info(f"MLflow experiment set to: {MLFLOW_EXPERIMENT_NAME}")
+        except Exception as e:
+            raise VehicleInsuranceException(e, sys) from e
+
     def train(self) -> ModelTrainerArtifact:
         try:
             logger.info("Model Trainer started.")
@@ -89,25 +106,70 @@ class ModelTrainer:
             logger.info(f"Best hyperparameters: {best_params}")
             logger.info(f"Experiment test metrics: {experiment_test_metrics}")
 
-            logger.info("Training LightGBM with is_unbalanced=True")
-            model = LGBMClassifier(
-                **best_params, is_unbalance=True, random_state=42, verbosity=-1
-            )
-            model.fit(X_train, y_train)
-            logger.info("Model training completed.")
+            self._set_up_mlflow()
+            client = get_mlflow_client()
+            with mlflow.start_run(run_name="LightGBM_is_unbalanced_True") as run:
+                run_id = run.info.run_id
+                logger.info(f"MLflow run started with run_id: {run_id}")
+                mlflow.log_params(best_params)
+                logger.info("Logged hyperparams to MLflow.")
 
-            # lets evaluate
-            logger.info("Evaluating on trian and test data")
-            train_metrics = self._compute_metrics(model, X_train, y_train)
-            test_metrics = self._compute_metrics(model, X_test, y_test)
-            logger.info(f"Train metrics: {train_metrics}")
-            logger.info(f"Test metrics: {test_metrics}")
+                logger.info("Training LightGBM with is_unbalanced=True")
+                model = LGBMClassifier(
+                    **best_params, is_unbalance=True, random_state=42, verbosity=-1
+                )
+                model.fit(X_train, y_train)
+                logger.info("Model training completed.")
+
+                # lets evaluate
+                logger.info("Evaluating on trian and test data")
+                train_metrics = self._compute_metrics(model, X_train, y_train)
+                test_metrics = self._compute_metrics(model, X_test, y_test)
+                logger.info(f"Train metrics: {train_metrics}")
+                logger.info(f"Test metrics: {test_metrics}")
+
+                # threshold check (forgot this last time)
+                test_recall = test_metrics["recall"]
+                if test_recall < self.model_trainer_config.expected_score:
+                    raise ValueError(
+                        f"Test recall {test_recall} is below the expected threshold of {self.model_trainer_config.expected_score}. Model performance is not acceptable."
+                    )
+                logger.info(f"Threshold check passed with test recall: {test_recall}")
+
+                mlflow.log_metrics({f"train_{k}": v for k, v in train_metrics.items()})
+                mlflow.log_metrics({f"test_{k}": v for k, v in test_metrics.items()})
+                logger.info("Logged metrics to MLflow.")
+
+                # register the model
+                mlflow.lightgbm.log_model(
+                    lgb_model=model,
+                    artifact_path="model",
+                    registered_model_name=MLFLOW_REGISTER_MODEL_NAME,
+                )
+                logger.info(
+                    f"Model logged and registered in MLflow with name: {MLFLOW_REGISTER_MODEL_NAME}"
+                )
+
+            new_version = client.get_latest_versions(
+                MLFLOW_REGISTER_MODEL_NAME, stages=["None"]
+            )[0].version
+            client.transition_model_version_stage(
+                name=MLFLOW_REGISTER_MODEL_NAME,
+                version=new_version,
+                stage=MLFLOW_STAGING_STAGE,
+            )
+            logger.info(
+                f"Model version {new_version} transitioned to stage: {MLFLOW_STAGING_STAGE}"
+            )
 
             # lets now save the model and the metrics
-            logger.info("Saving the trained model")
+            logger.info("Saving the trained model locally")
             save_object(self.model_trainer_config.trained_model_file_path, model)
             logger.info("Saving the metrics")
             metrics = {
+                "mlflow_run_id": run_id,
+                "mlflow_registered_model_name": MLFLOW_REGISTER_MODEL_NAME,
+                "mlflow_model_version": new_version,
                 "best_params": best_params,
                 "experiment_test_metrics": experiment_test_metrics,
                 "pipeline_train_metrics": train_metrics,
@@ -131,6 +193,7 @@ class ModelTrainer:
                 metrics_file_path=self.model_trainer_config.metrics_file_path,
                 train_metrics=train_metrics,
                 test_metrics=test_metrics,
+                run_id=run_id,
             )
             logger.info(f"Model Trainer artifact: {artifact}")
             logger.info("Model Trainer completed.")

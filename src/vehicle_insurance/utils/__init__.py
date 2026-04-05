@@ -3,6 +3,8 @@ import yaml
 import sys
 import pickle
 import numpy as np
+import mlflow
+from mlflow.tracking import MlflowClient
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
 
@@ -61,5 +63,16 @@ def load_numpy_array_data(file_path: str) -> np.ndarray:
             array = np.load(file_obj, allow_pickle=False)
         logger.info(f"Numpy array loaded successfully from {file_path}")
         return array
+    except Exception as e:
+        raise VehicleInsuranceException(e, sys) from e
+
+
+def get_mlflow_client() -> MlflowClient:
+    try:
+        tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+        if not tracking_uri:
+            raise ValueError("MLFLOW_TRACKING_URI is not set in environment variables.")
+        mlflow.set_tracking_uri(tracking_uri)
+        return MlflowClient(tracking_uri=tracking_uri)
     except Exception as e:
         raise VehicleInsuranceException(e, sys) from e
