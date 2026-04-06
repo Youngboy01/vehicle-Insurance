@@ -150,16 +150,17 @@ class ModelTrainer:
                     f"Model logged and registered in MLflow with name: {MLFLOW_REGISTER_MODEL_NAME}"
                 )
 
-            new_version = client.get_latest_versions(
-                MLFLOW_REGISTER_MODEL_NAME, stages=["None"]
-            )[0].version
-            client.transition_model_version_stage(
+            all_versions = client.get_latest_versions(MLFLOW_REGISTER_MODEL_NAME)
+            new_version = max(
+                [int(v.version) for v in all_versions]
+            )  # get the latest version number
+            client.set_registered_model_alias(
                 name=MLFLOW_REGISTER_MODEL_NAME,
-                version=new_version,
-                stage=MLFLOW_STAGING_STAGE,
+                version=str(new_version),
+                alias=MLFLOW_CHALLENGER_ALIAS,
             )
             logger.info(
-                f"Model version {new_version} transitioned to stage: {MLFLOW_STAGING_STAGE}"
+                f"Set model version {new_version} as {MLFLOW_CHALLENGER_ALIAS} in MLflow."
             )
 
             # lets now save the model and the metrics

@@ -3,7 +3,7 @@ import json
 import sys
 
 import pandas as pd
-import pandera as pa
+import pandera.pandas as pa
 from pandera import Column, DataFrameSchema, Check
 from pandas import DataFrame
 

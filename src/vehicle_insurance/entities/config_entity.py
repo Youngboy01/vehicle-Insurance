@@ -40,7 +40,7 @@ class DataValidationConfig:
         training_pipeline_config.artifact_dir, DATA_VALIDATION_DIR_NAME
     )
     report_file_path: str = os.path.join(
-        data_validation_dir, "report" ,DATA_VALIDATION_REPORT_FILE_NAME
+        data_validation_dir, "report", DATA_VALIDATION_REPORT_FILE_NAME
     )
 
 
@@ -77,3 +77,14 @@ class ModelTrainerConfig:
     )
     experiment_pkl_path: str = MODEL_TRAINER_EXPERIMENT_PKL_PATH
     expected_score: float = MODEL_TRAINER_EXPECTED_SCORE
+
+
+@dataclass
+class ModelEvaluationConfig:
+    model_evaluation_dir: str = os.path.join(
+        training_pipeline_config.artifact_dir, MODEL_EVALUATION_DIR_NAME
+    )
+    report_file_path: str = os.path.join(
+        model_evaluation_dir, MODEL_EVALUATION_REPORT_FILE_NAME
+    )
+    changed_threshold_score: float = MODEL_EVALUATION_CHANGED_THRESHOLD_SCORE

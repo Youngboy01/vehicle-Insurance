@@ -5,17 +5,20 @@ from vehicle_insurance.components.dataIngestion import DataIngestion
 from vehicle_insurance.components.dataValidation import DataValidation
 from vehicle_insurance.components.dataTransformation import DataTransformation
 from vehicle_insurance.components.modelTrainer import ModelTrainer
+from vehicle_insurance.components.modelEvaluation import ModelEvaluation
 from vehicle_insurance.entities.config_entity import (
     DataIngestionConfig,
     DataValidationConfig,
     DataTransformationConfig,
     ModelTrainerConfig,
+    ModelEvaluationConfig,
 )
 from vehicle_insurance.entities.artifact_entity import (
     DataIngestionArtifact,
     DataValidationArtifact,
     DataTransformationArtifact,
     ModelTrainerArtifact,
+    ModelEvaluationArtifact,
 )
 
 logger = setup_logger()
@@ -28,6 +31,7 @@ class TrainingPipeline:
             self.data_validation_config = DataValidationConfig()
             self.data_transformation_config = DataTransformationConfig()
             self.model_trainer_config = ModelTrainerConfig()
+            self.model_evaluation_config = ModelEvaluationConfig()
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e
 
@@ -102,6 +106,23 @@ class TrainingPipeline:
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e
 
+    def start_model_evaluation(
+        self, model_trainer_artifact: ModelTrainerArtifact
+    ) -> ModelEvaluationArtifact:
+        try:
+            logger.info("Starting model evaluation component")
+            model_evaluation = ModelEvaluation(
+                model_evaluation_config=self.model_evaluation_config,
+                model_trainer_artifact=model_trainer_artifact,
+            )
+            model_evaluation_artifact = model_evaluation.evaluate_model()
+            logger.info(
+                f"Model evaluation component completed with artifact: {model_evaluation_artifact}"
+            )
+            return model_evaluation_artifact
+        except Exception as e:
+            raise VehicleInsuranceException(e, sys) from e
+
     def run_pipeline(self):
         try:
             data_ingestion_artifact = self.start_data_ingestion()
@@ -115,6 +136,16 @@ class TrainingPipeline:
             model_trainer_artifact = self.start_model_training(
                 data_transformation_artifact=data_transformation_artifact
             )
-            logger.info(f"Data validation status: {data_validation_artifact.status}")
+            model_evaluation_artifact = self.start_model_evaluation(
+                model_trainer_artifact=model_trainer_artifact
+            )
+            if not model_evaluation_artifact.is_model_accepted:
+                logger.info(
+                    "Pipeline completed - challenger model did not outperform the champion model. Existing champion model retained."
+                )
+            else:
+                logger.info(
+                    "Pipeline completed - challenger model outperformed the champion model. Challenger model promoted to champion."
+                )
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e

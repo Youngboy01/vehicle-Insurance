@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -28,3 +29,13 @@ class ModelTrainerArtifact:
     train_metrics: dict
     test_metrics: dict
     run_id: str
+
+
+@dataclass
+class ModelEvaluationArtifact:
+    is_model_accepted: bool
+    champion_model_version: Optional[str]
+    challenger_model_version: str
+    champion_recall: Optional[float]
+    challenger_recall: float
+    evaluation_report_file_path: str
