@@ -150,7 +150,15 @@ class ModelTrainer:
                     f"Model logged and registered in MLflow with name: {MLFLOW_REGISTER_MODEL_NAME}"
                 )
 
-            all_versions = client.get_latest_versions(MLFLOW_REGISTER_MODEL_NAME)
+                mlflow.log_artifact(
+                    local_path=self.data_transformation_artifact.transformer_object_file_path,
+                    artifact_path="data_transformation",
+                )
+                logger.info("Logged preprocessor object to MLflow artifacts.")
+
+            all_versions = client.search_model_versions(
+                f"name='{MLFLOW_REGISTER_MODEL_NAME}'"
+            )
             new_version = max(
                 [int(v.version) for v in all_versions]
             )  # get the latest version number

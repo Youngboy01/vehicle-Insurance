@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Insurance Cross-Sell · Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <header>
+    <div class="header-title">
+      <h1>Vehicle Insurance · Predictor</h1>
+      <p>Prediction Dashboard — LightGBM Champion</p>
+    </div>
+    <div class="status-pill">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">checking...</span>
+    </div>
+  </header>
+
+  <div class="grid">
+
+    <!-- ── HEALTH CARD ── -->
+    <div class="card card-health">
+      <div class="card-label">Model Status</div>
+      <div class="health-grid">
+        <div class="health-item">
+          <label>Champion Version</label>
+          <div class="val" id="hVersion">—</div>
+        </div>
+        <div class="health-item">
+          <label>Test Recall</label>
+          <div class="val" id="hRecall">—</div>
+        </div>
+        <div class="health-item" style="grid-column: 1 / -1;">
+          <label>Loaded At</label>
+          <div class="val muted" id="hLoaded">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── OPS CARD ── -->
+    <div class="card card-ops">
+      <div class="card-label">Pipeline Control</div>
+      <p style="font-size:0.82rem; color:var(--muted); margin-bottom:20px; line-height:1.7;">
+        Trigger a full retraining run. The pipeline fetches fresh data from MongoDB,
+        trains the model, and promotes a new champion if recall improves.
+      </p>
+      <button class="btn btn-warn" id="trainBtn" onclick="triggerTrain()">
+        <span class="spinner"></span>
+        <span class="btn-text">Run Training Pipeline</span>
+      </button>
+      <div class="train-status" id="trainStatus"></div>
+    </div>
+
+    <!-- ── PREDICT CARD ── -->
+    <div class="card card-predict">
+      <div class="card-label">Predict — Cross-Sell Likelihood</div>
+
+      <div class="form-grid">
+
+        <div class="field">
+          <label>Gender</label>
+          <select id="Gender">
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Age</label>
+          <input type="number" id="Age" value="35" min="18" max="100" />
+        </div>
+
+        <div class="field">
+          <label>Driving License</label>
+          <select id="Driving_License">
+            <option value="1">Yes (1)</option>
+            <option value="0">No (0)</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Region Code</label>
+          <input type="number" id="Region_Code" value="28" step="0.1" />
+        </div>
+
+        <div class="field">
+          <label>Previously Insured</label>
+          <select id="Previously_Insured">
+            <option value="0">No (0)</option>
+            <option value="1">Yes (1)</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Vehicle Age</label>
+          <select id="Vehicle_Age">
+            <option value="< 1 Year">&lt; 1 Year</option>
+            <option value="1-2 Year" selected>1-2 Year</option>
+            <option value="> 2 Years">&gt; 2 Years</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Vehicle Damage</label>
+          <select id="Vehicle_Damage">
+            <option value="Yes">Yes</option>
+            <option value="No">No</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Annual Premium (₹)</label>
+          <input type="number" id="Annual_Premium" value="40454" step="0.01" />
+        </div>
+
+        <div class="field">
+          <label>Policy Sales Channel</label>
+          <input type="number" id="Policy_Sales_Channel" value="26" step="0.1" />
+        </div>
+
+        <div class="field">
+          <label>Vintage (days)</label>
+          <input type="number" id="Vintage" value="217" min="0" />
+        </div>
+
+      </div>
+
+      <button class="btn btn-primary" id="predictBtn" onclick="runPredict()">
+        <span class="spinner"></span>
+        <span class="btn-text">Run Prediction</span>
+      </button>
+
+      <!-- RESULT -->
+      <div class="result-box" id="resultBox">
+        <div class="result-header">Prediction Result</div>
+        <div class="result-verdict" id="resultVerdict"></div>
+        <div class="result-meta">
+          <span>Probability: <strong id="resultProb">—</strong></span>
+          <span>Model v<strong id="resultVersion">—</strong></span>
+          <span id="resultTs"></span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+  // ── UTILS ──────────────────────────────────────────────────────────────
+
+  function showToast(msg, isErr = false) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (isErr ? ' err' : '');
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.className = 'toast'; }, 3500);
+  }
+
+  function setLoading(btnId, on) {
+    const btn = document.getElementById(btnId);
+    btn.disabled = on;
+    btn.classList.toggle('loading', on);
+  }
+
+  // ── HEALTH POLL ────────────────────────────────────────────────────────
+
+  async function pollHealth() {
+    const dot  = document.getElementById('statusDot');
+    const txt  = document.getElementById('statusText');
+    try {
+      const res  = await fetch('/health');
+      const data = await res.json();
+      if (res.ok) {
+        dot.className  = 'status-dot online';
+        txt.textContent = 'online';
+        document.getElementById('hVersion').textContent = `v${data.model_version}`;
+        document.getElementById('hRecall').textContent  = (data.recall * 100).toFixed(2) + '%';
+        document.getElementById('hLoaded').textContent  =
+          new Date(data.loaded_at).toLocaleString();
+      } else {
+        throw new Error(data.detail || 'unhealthy');
+      }
+    } catch (e) {
+      dot.className   = 'status-dot error';
+      txt.textContent = 'offline';
+      document.getElementById('hVersion').textContent = '—';
+      document.getElementById('hRecall').textContent  = '—';
+      document.getElementById('hLoaded').textContent  = '—';
+    }
+  }
+
+  pollHealth();
+  setInterval(pollHealth, 30_000);
+
+  // ── PREDICT ────────────────────────────────────────────────────────────
+
+  async function runPredict() {
+    setLoading('predictBtn', true);
+
+    const payload = {
+      Gender:               document.getElementById('Gender').value,
+      Age:                  parseInt(document.getElementById('Age').value),
+      Driving_License:      parseInt(document.getElementById('Driving_License').value),
+      Region_Code:          parseFloat(document.getElementById('Region_Code').value),
+      Previously_Insured:   parseInt(document.getElementById('Previously_Insured').value),
+      Vehicle_Age:          document.getElementById('Vehicle_Age').value,
+      Vehicle_Damage:       document.getElementById('Vehicle_Damage').value,
+      Annual_Premium:       parseFloat(document.getElementById('Annual_Premium').value),
+      Policy_Sales_Channel: parseFloat(document.getElementById('Policy_Sales_Channel').value),
+      Vintage:              parseInt(document.getElementById('Vintage').value),
+    };
+
+    try {
+      const res  = await fetch('/predict', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(payload),
+      });
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.detail || 'Prediction failed.');
+
+      const box      = document.getElementById('resultBox');
+      const verdict  = document.getElementById('resultVerdict');
+      const isInterested = data.prediction === 1;
+
+      verdict.textContent = isInterested ? '✦ Likely Interested' : '✧ Likely Not Interested';
+      verdict.className   = 'result-verdict ' + (isInterested ? 'yes' : 'no');
+
+      document.getElementById('resultProb').textContent    = (data.probability * 100).toFixed(2) + '%';
+      document.getElementById('resultVersion').textContent = data.model_version;
+      document.getElementById('resultTs').textContent      =
+        new Date(data.api_timestamp).toLocaleTimeString();
+
+      box.className = 'result-box visible';
+
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
+      setLoading('predictBtn', false);
+    }
+  }
+
+  // ── TRAIN ──────────────────────────────────────────────────────────────
+
+  async function triggerTrain() {
+    const statusEl = document.getElementById('trainStatus');
+    setLoading('trainBtn', true);
+    statusEl.className   = 'train-status running';
+    statusEl.textContent = '⟳ Pipeline running in background...';
+
+    try {
+      const res  = await fetch('/train', { method: 'POST' });
+      const data = await res.json();
+
+      if (res.status === 409) {
+        statusEl.className   = 'train-status running';
+        statusEl.textContent = '⚠ Training already in progress.';
+        showToast('Training already running.', true);
+        return;
+      }
+      if (!res.ok) throw new Error(data.detail || 'Train trigger failed.');
+
+      statusEl.className   = 'train-status done';
+      statusEl.textContent = '✓ Pipeline accepted — running in background.';
+      showToast('Training pipeline started.');
+
+    } catch (e) {
+      statusEl.className   = 'train-status err';
+      statusEl.textContent = '✗ ' + e.message;
+      showToast(e.message, true);
+    } finally {
+      setLoading('trainBtn', false);
+    }
+  }
+</script>
+</body>
+</html>
