@@ -1,0 +1,31 @@
+# Virtual environment — must be rebuilt inside the container
+.venv
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Local artifacts and MLflow runs
+artifact/
+artifacts/
+mlruns/
+logs/
+
+# Notebooks
+notebooks/
+
+# Git
+.git
+.gitignore
+
+# Env files — secrets are injected at runtime via Railway env vars
+.env
+.env.*
+
+# Dev/editor noise
+.vscode/
+.idea/
+*.DS_Store
