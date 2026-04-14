@@ -22,7 +22,7 @@ from src.vehicle_insurance.utils import get_mlflow_client, load_object
 from datetime import datetime
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=False)
 logger = setup_logger()
 
 

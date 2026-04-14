@@ -12,6 +12,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 uv sync --frozen --no-dev
 
 FROM python:3.13-slim-bookworm AS runtime
+RUN apt-get update && \
+apt-get install -y --no-install-recommends libgomp1 && \
+rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" \
 PYTHONDONTWRITEBYTECODE=1 \
