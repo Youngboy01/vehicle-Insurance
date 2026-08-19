@@ -8,7 +8,7 @@ from fastapi import FastAPI, BackgroundTasks, Depends, Header, HTTPException, Re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 
 from src.vehicle_insurance.constants import (
@@ -92,8 +92,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Vehicle Insurance Prediction API",
-    description="API for predicting vehicle insurance claims and managing model training.",
+    title="Vehicle Insurance Cross-Sell Response API",
+    description=(
+        "API for estimating a customer's response propensity to a vehicle-insurance "
+        "cross-sell offer and managing model training and model reload operations. "
+        "Predictions are intended for marketing prioritization only and must not be "
+        "used for claims, pricing, underwriting, fraud detection, eligibility, "
+        "policy cancellation, or automatic denial decisions."
+    ),
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -121,6 +127,8 @@ def verify_reload_token(x_reload_token: str = Header(...)):
 
 
 class PredictRequest(BaseModel):
+    """Customer information available before a cross-sell campaign."""
+
     Age: int
     Gender: str
     Driving_License: int
@@ -151,16 +159,39 @@ class PredictRequest(BaseModel):
 
 
 class PredictResponse(BaseModel):
-    prediction: int
-    probability: float
-    model_version: str
-    api_timestamp: str
+    """Estimated response propensity returned by the champion model."""
+
+    prediction: int = Field(
+        description=(
+            "Binary model classification: 1 means likely positive response to the "
+            "vehicle-insurance cross-sell offer; 0 means unlikely positive response."
+        )
+    )
+    probability: float = Field(
+        description=(
+            "Estimated response propensity score for the positive class. This is "
+            "not guaranteed to be a perfectly calibrated probability."
+        )
+    )
+    model_version: str = Field(
+        description="MLflow champion model version used for this prediction."
+    )
+    api_timestamp: str = Field(
+        description="Timestamp at which the API generated the prediction."
+    )
 
 
 class HealthResponse(BaseModel):
+    """Serving status and offline evaluation metadata for the loaded model."""
+
     status: str
     model_version: str
-    recall: float
+    recall: float = Field(
+        description=(
+            "Offline test recall recorded for the loaded champion model; this is "
+            "not live campaign performance."
+        )
+    )
     loaded_at: str
 
 
@@ -170,9 +201,16 @@ class TrainResponse(BaseModel):
 
 
 class ReloadResponse(BaseModel):
+    """Result of loading the current MLflow champion model."""
+
     status: str
     new_model_version: str
-    new_recall: float
+    new_recall: float = Field(
+        description=(
+            "Offline test recall recorded for the newly loaded champion model; "
+            "this is not live campaign performance."
+        )
+    )
     reloaded_at: str
 
 
@@ -195,7 +233,17 @@ async def health_check():
     )
 
 
-@app.post("/predict", response_model=PredictResponse, tags=["Prediction"])
+@app.post(
+    "/predict",
+    response_model=PredictResponse,
+    tags=["Prediction"],
+    summary="Estimate cross-sell response propensity",
+    description=(
+        "Scores one customer using information available before a marketing "
+        "campaign. The result is intended to support customer prioritization for "
+        "vehicle-insurance cross-sell outreach."
+    ),
+)
 async def predict(request: PredictRequest):
     engine = current_engine
     if engine is None:
