@@ -1,6 +1,6 @@
 # 🚗 Vehicle Insurance Cross-Sell Prediction — MLOps Pipeline
 
-An end-to-end, production-style machine learning system that predicts whether a health insurance customer will be interested in **vehicle insurance cross-sell**. The project goes beyond a notebook model: it's a modular pipeline with schema validation, experiment tracking, a champion/challenger promotion workflow, and a served REST API — all containerized with Docker.
+An end-to-end machine learning system that predicts whether a health insurance customer will respond positively to a **vehicle insurance cross-sell** offer. The project goes beyond a notebook model: it is a modular pipeline with schema validation, experiment tracking, a champion/challenger promotion workflow, and a served REST API — all containerized with Docker.
 
 > **Status:** Core pipeline, model registry workflow, and API are fully functional. CI/CD and cloud deployment are in progress (see [Roadmap](#-roadmap)).
 
@@ -9,6 +9,8 @@ An end-to-end, production-style machine learning system that predicts whether a 
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
+- [Problem Definition and Scope](#-problem-definition-and-scope)
+- [Model Card](#-model-card)
 - [Architecture](#-architecture)
 - [Tech Stack](#-tech-stack)
 - [Project Structure](#-project-structure)
@@ -27,7 +29,7 @@ An end-to-end, production-style machine learning system that predicts whether a 
 
 ## 🔎 Overview
 
-The dataset used is the classic **health-to-vehicle-insurance cross-sell** dataset: given a customer's demographics, vehicle history, and policy details, predict whether they'll respond positively to a vehicle insurance offer (`Response` = 0/1). The target is highly imbalanced, which shapes several design decisions below (class-weighted LightGBM, recall-first evaluation).
+The dataset used is the classic **health-to-vehicle-insurance cross-sell** dataset: given a customer's demographics, vehicle history, and policy details, predict whether they will respond positively to a vehicle-insurance offer (`Response` = 0/1). The target is highly imbalanced, which shapes several design decisions below, including class-weighted LightGBM and recall-oriented baseline evaluation.
 
 Rather than training a model once and calling it done, this project implements the pieces you'd expect in a real ML system:
 
@@ -36,6 +38,37 @@ Rather than training a model once and calling it done, this project implements t
 - **Experiment tracking and a model registry** with a champion/challenger promotion rule
 - **A served model** behind a REST API that can retrain and hot-swap itself
 - **A containerized runtime** for reproducible deployment
+
+---
+
+## 🎯 Problem Definition and Scope
+
+### Phase 1 project definition
+
+This project is a **budget-aware vehicle-insurance cross-sell decision platform**. Given customer information available before a marketing campaign, it estimates each customer's likelihood of responding positively to a vehicle-insurance cross-sell offer, ranks customers by that response propensity, and supports selecting customers for outreach under a campaign budget.
+
+The decision unit is **one customer-campaign opportunity**. The intended user is a marketing or campaign-operations team deciding which customers to prioritize for outreach.
+
+The current API performs single-customer inference. Batch ranking, contact-budget simulation, and campaign selection are Phase 1 extensions built on top of the response score; they are not yet claimed to be implemented by the current `/predict` endpoint.
+
+### Target meaning
+
+- `Response = 1`: the customer responded positively to the vehicle-insurance offer.
+- `Response = 0`: the customer did not respond positively to the vehicle-insurance offer.
+
+The model predicts **response propensity**, not claims, underwriting risk, pricing, eligibility, fraud, or policy approval. It must not be used for claim decisions, premium calculation, underwriting, fraud detection, eligibility decisions, policy cancellation, or automatic denial/adverse decisions.
+
+The current dataset supports propensity modeling only. It does not contain the treatment/control information required to claim that contacting a customer caused an incremental response. Uplift modeling, A/B testing, and causal campaign measurement are future extensions requiring additional campaign data.
+
+See the detailed [Model Card](docs/model_card.md) for the model's intended use, evaluation evidence, limitations, and operational risks.
+
+---
+
+## 📄 Model Card
+
+The [model card](docs/model_card.md) documents the current LightGBM response-propensity model, including its target definition, data assumptions, evaluation results, intended use, prohibited uses, and planned improvements.
+
+The model card is a living document and must be updated whenever the model, data, evaluation protocol, or serving contract changes.
 
 ---
 
@@ -172,7 +205,7 @@ Base URL: `http://localhost:8080`
 | Method | Endpoint    | Description |
 |--------|-------------|-------------|
 | `GET`  | `/`         | Serves the prediction dashboard UI |
-| `GET`  | `/health`   | Returns current champion model version, recall, and load time |
+| `GET`  | `/health`   | Returns current champion model version, offline test recall, and load time |
 | `POST` | `/predict`  | Runs inference on a single customer record |
 | `POST` | `/train`    | Kicks off the training pipeline as a background task (locked — rejects if training is already running) |
 | `POST` | `/reload`   | Hot-swaps the in-memory model with the latest MLflow champion, no restart required (requires `X-Reload-Token` header) |
@@ -202,6 +235,10 @@ Base URL: `http://localhost:8080`
   "api_timestamp": "2026-07-08T10:15:00"
 }
 ```
+
+In the response, `prediction = 1` means that the model classifies the customer as likely to respond positively to the cross-sell offer; `prediction = 0` means that the model classifies the customer as unlikely to respond positively. The `probability` field is the model's estimated response propensity score for the positive class. Until formal calibration is evaluated, it should not be interpreted as a guaranteed or perfectly calibrated probability.
+
+The returned score is intended for marketing prioritization. It is not a claim probability, underwriting score, price recommendation, eligibility decision, or causal estimate of whether contacting the customer will create an incremental response.
 
 Interactive Swagger docs are available at `/docs` once the server is running.
 
@@ -249,7 +286,7 @@ RELOAD_TOKEN=<any secret string — protects the /reload endpoint>
 python -c "from vehicle_insurance.pipeline.training_pipeline import TrainingPipeline; TrainingPipeline().run_pipeline()"
 ```
 
-This runs all five stages end-to-end and, if the trained model passes the recall threshold and beats the current champion, promotes it in the MLflow Model Registry. Artifacts (raw data, splits, transformed arrays, preprocessor, trained model, reports) are saved under a timestamped `artifact/` directory.
+This runs all five stages end-to-end and, if the trained model passes the recall threshold and beats the current champion, promotes it in the MLflow Model Registry. Artifacts (raw data, splits, transformed arrays, preprocessor, trained model, reports) are saved under a timestamped `artifact/` directory. The current pipeline trains and evaluates the response-propensity model; campaign-budget selection is a separate Phase 1 capability to be added later.
 
 ---
 
@@ -319,7 +356,7 @@ Configured in `configs/schema.yaml` and enforced by Pandera in the validation st
 | `Annual_Premium` | float | > 0 |
 | `Policy_Sales_Channel` | float | > 0 |
 | `Vintage` | int | ≥ 0 |
-| `Response` | int | target, 0 / 1 |
+| `Response` | int | marketing-response target: `0` = no positive response, `1` = positive response |
 
 ---
 
