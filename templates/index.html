@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Insurance Cross-Sell · Dashboard</title>
+  <title>Vehicle Insurance Cross-Sell · Dashboard</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -12,8 +12,8 @@
   <!-- HEADER -->
   <header>
     <div class="header-title">
-      <h1>Vehicle Insurance · Predictor</h1>
-      <p>Prediction Dashboard — LightGBM Champion</p>
+      <h1>Vehicle Insurance · Cross-Sell Response</h1>
+      <p>Response Propensity Dashboard — LightGBM Champion</p>
     </div>
     <div class="status-pill">
       <span class="status-dot" id="statusDot"></span>
@@ -32,7 +32,7 @@
           <div class="val" id="hVersion">—</div>
         </div>
         <div class="health-item">
-          <label>Test Recall</label>
+          <label>Offline Test Recall</label>
           <div class="val" id="hRecall">—</div>
         </div>
         <div class="health-item" style="grid-column: 1 / -1;">
@@ -47,7 +47,8 @@
       <div class="card-label">Pipeline Control</div>
       <p style="font-size:0.82rem; color:var(--muted); margin-bottom:20px; line-height:1.7;">
         Trigger a full retraining run. The pipeline fetches fresh data from MongoDB,
-        trains the model, and promotes a new champion if recall improves.
+        trains the response-propensity model, and promotes a new champion when the
+        current evaluation gate is passed.
       </p>
       <button class="btn btn-warn" id="trainBtn" onclick="triggerTrain()">
         <span class="spinner"></span>
@@ -58,7 +59,7 @@
 
     <!-- ── PREDICT CARD ── -->
     <div class="card card-predict">
-      <div class="card-label">Predict — Cross-Sell Likelihood</div>
+      <div class="card-label">Estimate — Cross-Sell Response</div>
 
       <div class="form-grid">
 
@@ -132,18 +133,22 @@
 
       <button class="btn btn-primary" id="predictBtn" onclick="runPredict()">
         <span class="spinner"></span>
-        <span class="btn-text">Run Prediction</span>
+        <span class="btn-text">Estimate Response</span>
       </button>
 
       <!-- RESULT -->
       <div class="result-box" id="resultBox">
-        <div class="result-header">Prediction Result</div>
+        <div class="result-header">Cross-Sell Response Estimate</div>
         <div class="result-verdict" id="resultVerdict"></div>
         <div class="result-meta">
-          <span>Probability: <strong id="resultProb">—</strong></span>
+          <span>Estimated Response Likelihood: <strong id="resultProb">—</strong></span>
           <span>Model v<strong id="resultVersion">—</strong></span>
           <span id="resultTs"></span>
         </div>
+        <p class="result-note">
+          Use this estimate to prioritize marketing outreach. It is not a claims,
+          pricing, underwriting, or eligibility decision.
+        </p>
       </div>
 
     </div>
@@ -232,7 +237,7 @@
       const verdict  = document.getElementById('resultVerdict');
       const isInterested = data.prediction === 1;
 
-      verdict.textContent = isInterested ? '✦ Likely Interested' : '✧ Likely Not Interested';
+      verdict.textContent = isInterested ? '✦ Likely to Respond' : '✧ Less Likely to Respond';
       verdict.className   = 'result-verdict ' + (isInterested ? 'yes' : 'no');
 
       document.getElementById('resultProb').textContent    = (data.probability * 100).toFixed(2) + '%';

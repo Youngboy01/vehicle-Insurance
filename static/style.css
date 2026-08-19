@@ -287,6 +287,13 @@ header {
 
 .result-meta span strong { color: var(--text); }
 
+.result-note {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
 /* ── TRAIN STATUS ── */
 .train-status {
   margin-top: 14px;
