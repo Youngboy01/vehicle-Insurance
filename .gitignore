@@ -136,3 +136,8 @@ logs/
 *.csv
 
 demo.py
+
+# Private project planning and change-tracking notes
+/tasks.md
+/context.md
+/changes.md
