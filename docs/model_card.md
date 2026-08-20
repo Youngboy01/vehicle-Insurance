@@ -19,9 +19,9 @@ This model estimates whether a customer is likely to respond positively to a veh
 
 ## 2. Project definition
 
-The broader Phase 1 system is a budget-aware vehicle-insurance cross-sell decision platform. Given customer information available before a marketing campaign, the system should estimate response propensity, rank customers, and support selecting customers for outreach under a campaign budget.
+The broader Phase 1 system is a top-K vehicle-insurance cross-sell decision-support platform. Given customer information available before a marketing campaign, the system should estimate response propensity, rank customers, and support selecting the highest-scoring customers at a company-selected campaign capacity.
 
-The current deployed API performs single-customer inference. Batch ranking, contact-budget simulation, and campaign selection are planned Phase 1 capabilities built on top of the response score; they should not be described as already implemented by the current `/predict` endpoint.
+The current deployed API performs single-customer inference. Batch ranking, top-K selection, and selection-quality evaluation are planned Phase 1 capabilities built on top of the response score; they should not be described as already implemented by the current `/predict` endpoint. Budget-based selection, outreach-cost assumptions, conversion-value assumptions, and ROI calculations are later extensions.
 
 ## 3. Intended use
 
@@ -31,11 +31,11 @@ The model may be used to:
 
 - prioritize customers for vehicle-insurance marketing outreach;
 - produce a response-propensity ranking for campaign planning;
-- compare possible contact budgets using offline lift and precision/recall metrics;
+- compare top-K campaign capacities using offline lift and precision/recall metrics;
 - support a human campaign-operations workflow;
 - monitor whether model scores remain useful over time.
 
-The model output should be combined with campaign capacity, contact cost, business rules, customer preferences, and applicable legal or organizational policies.
+The model output should be combined with the company-selected campaign capacity, business rules, customer preferences, and applicable legal or organizational policies. Financial assumptions are outside the current Phase 1 scope.
 
 ### Prohibited uses
 
@@ -165,20 +165,19 @@ The current model is compared mainly using recall, precision, F1, accuracy, and 
 
 ## 9. Operating point and campaign decisions
 
-The current serving path returns a single-customer class prediction and score. It does not yet select a campaign list under a fixed contact budget.
+The current serving path returns a single-customer class prediction and score. It does not yet rank a batch or select a top-K campaign list.
 
-The current decision threshold has not been justified using:
+The current campaign operating point has not yet been validated using:
 
-- contact capacity;
-- contact cost;
-- conversion value;
-- missed-opportunity cost;
-- expected campaign profit;
-- precision or recall at a fixed top-K population.
+- precision at a fixed top-K population;
+- recall at a fixed top-K population;
+- lift and cumulative gains at a fixed top-K population.
+
+For the current Phase 1, the intended rule is to rank customers by response propensity and select the highest-scoring K customers, where K may be a company-selected percentage or customer count. The initial evaluation should compare top 1%, 5%, 10%, and 20%, with top 10% as the initial illustrative operating point.
 
 Until this work is completed, the model should be treated as an experimental scoring component rather than a production campaign decision-maker.
 
-The next evaluation stage should select a threshold on validation data and report performance on realistic contact budgets such as the top 1%, 5%, 10%, and 20% of customers.
+Budget-based selection, outreach-cost modeling, conversion-value modeling, expected profit, and ROI are intentionally deferred. They may be added later as a configurable business-optimization layer.
 
 ## 10. Explainability and fairness
 
@@ -247,7 +246,7 @@ The model card should be updated before a model is promoted to a materially diff
 
 - Freeze train/validation/final-test evaluation design.
 - Add honest baselines and cross-validation.
-- Select threshold using validation data and contact-budget metrics.
+- Select the top-K operating point using validation data and top-K selection-quality metrics.
 - Add PR-AUC, lift, gains, precision@K, recall@K, calibration, and confidence intervals.
 - Validate data provenance, duplicates, split overlap, and target prevalence.
 

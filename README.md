@@ -45,11 +45,11 @@ Rather than training a model once and calling it done, this project implements t
 
 ### Phase 1 project definition
 
-This project is a **budget-aware vehicle-insurance cross-sell decision platform**. Given customer information available before a marketing campaign, it estimates each customer's likelihood of responding positively to a vehicle-insurance cross-sell offer, ranks customers by that response propensity, and supports selecting customers for outreach under a campaign budget.
+This project is a **top-K vehicle-insurance cross-sell decision-support platform**. Given customer information available before a marketing campaign, it estimates each customer's likelihood of responding positively to a vehicle-insurance cross-sell offer, ranks customers by that response propensity, and supports selecting the highest-scoring customers for outreach at a company-selected capacity.
 
 The decision unit is **one customer-campaign opportunity**. The intended user is a marketing or campaign-operations team deciding which customers to prioritize for outreach.
 
-The current API performs single-customer inference. Batch ranking, contact-budget simulation, and campaign selection are Phase 1 extensions built on top of the response score; they are not yet claimed to be implemented by the current `/predict` endpoint.
+The current API performs single-customer inference. Batch ranking, top-K selection, and selection-quality evaluation are Phase 1 extensions built on top of the response score; they are not yet claimed to be implemented by the current `/predict` endpoint. Budget-based selection, outreach-cost assumptions, conversion-value assumptions, and ROI calculations are later extensions.
 
 ### Target meaning
 
@@ -286,7 +286,7 @@ RELOAD_TOKEN=<any secret string — protects the /reload endpoint>
 python -c "from vehicle_insurance.pipeline.training_pipeline import TrainingPipeline; TrainingPipeline().run_pipeline()"
 ```
 
-This runs all five stages end-to-end and, if the trained model passes the recall threshold and beats the current champion, promotes it in the MLflow Model Registry. Artifacts (raw data, splits, transformed arrays, preprocessor, trained model, reports) are saved under a timestamped `artifact/` directory. The current pipeline trains and evaluates the response-propensity model; campaign-budget selection is a separate Phase 1 capability to be added later.
+This runs all five stages end-to-end and, if the trained model passes the recall threshold and beats the current champion, promotes it in the MLflow Model Registry. Artifacts (raw data, splits, transformed arrays, preprocessor, trained model, reports) are saved under a timestamped `artifact/` directory. The current pipeline trains and evaluates the response-propensity model; top-K batch selection and selection-quality evaluation are separate Phase 1 capabilities to be added later. Budget-based selection is deferred beyond the current implementation.
 
 ---
 
