@@ -5,6 +5,7 @@ description = "Vehicle Insurance MLOps Project"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
+    "catboost>=1.2.10",
     "dotenv>=0.9.9",
     "fastapi>=0.135.2",
     "imblearn>=0.0",
