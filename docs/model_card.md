@@ -181,7 +181,7 @@ Budget-based selection, outreach-cost modeling, conversion-value modeling, expec
 
 ## 10. Explainability and fairness
 
-Explainability is not yet complete. The system should eventually provide global feature importance and local reason codes so campaign users understand why a customer was prioritized.
+Global and local explainability for the frozen weighted LightGBM model has been completed with TreeSHAP in `notebooks/explainability_v1.ipynb`. The results provide model reason codes for analysis and future UI presentation. They explain the model's learned associations; they do not establish causal campaign impact.
 
 Segment-level performance and fairness analysis are also not yet complete. At minimum, evaluate precision, recall, selection rate, false-positive rate, and calibration across relevant segments such as:
 
@@ -275,3 +275,66 @@ When treatment/control campaign data becomes available:
 **Owner:** Project owner to be specified.
 
 **Review cadence:** Update after any change to the dataset, target definition, split protocol, features, model, threshold, serving contract, or intended use.
+
+## 17. SHAP explainability
+
+The frozen weighted LightGBM model was explained in `notebooks/explainability_v1.ipynb` using TreeSHAP. The notebook loads the complete preprocessing-plus-LightGBM pipeline and does not retrain, retune, or modify the frozen model.
+
+### Lineage and protocol
+
+- Source frozen model run ID: `dc28826afdcc4e5cbce068db62439094`.
+- Resolved MLflow model URI used for loading: `models:/m-3aacf46fc018452ab9aab96033eb7e56`.
+- SHAP explanation run ID: `9a3d12ac156c48dda5a0a1e6a0b1d45f`.
+- Explanation sample: 5,000 customers.
+- Sample response prevalence: 12.2600%; full-data prevalence: 12.2563%.
+- Transformed feature count: 220.
+- Maximum SHAP additivity error: 0.00000000.
+- Outreach boundary analyzed: configurable top 10%, equal to 38,110 of 381,109 customers in this run.
+
+The protocol includes transformed-feature global importance and beeswarm plots, aggregation of one-hot SHAP values back to raw business features, numeric-feature dependence plots, local waterfall and grouped-contribution plots for customers around the outreach boundary, and MLflow logging of the plots, tables, metadata, and validation checks.
+
+### Global findings and interpretation
+
+Grouped mean absolute SHAP contribution was:
+
+| Raw feature | Mean absolute SHAP contribution | Interpretation |
+|---|---:|---|
+| `Previously_Insured` | 2.350207 | Dominant ranking signal. Value `0` generally raises the response score and value `1` lowers it. |
+| `Vehicle_Damage` | 0.968988 | `Yes` generally raises the score and `No` lowers it. |
+| `Policy_Sales_Channel` | 0.416180 | Channel levels have materially different learned response patterns. |
+| `Region_Code` | 0.329538 | Region levels contribute segment-specific response patterns. |
+| `Age` | 0.326053 | Moderate nonlinear effect, generally positive in the mid-30s to early-40s and increasingly negative at older ages. |
+| `Annual_Premium` | 0.068790 | Modest, dispersed, non-monotonic contribution. |
+| `Vehicle_Age` | 0.054724 | Small contribution relative to the leading features. |
+| `Vintage` | 0.052964 | Low and noisy contribution. |
+| `Gender` | 0.050113 | Low global contribution, but still requires segment-level fairness review. |
+| `Driving_License` | 0.003009 | Nearly negligible contribution in the frozen model. |
+
+The strongest conclusion is that the model's ranking behavior is concentrated in `Previously_Insured`, `Vehicle_Damage`, age, and selected channel/region levels. This is consistent with the earlier ablation and permutation-importance experiments and explains why changing model families did not create a substantial performance improvement. The current data contains limited independent signal beyond these variables.
+
+`Policy_Sales_Channel` and `Region_Code` must continue to be treated as categorical codes. A single encoded category is interpreted relative to the one-hot reference category; individual category effects should not be described as universally good or bad. Their grouped importance indicates that the broader channel and region patterns matter.
+
+The Age dependence plot is inverted-U shaped rather than monotonic. Annual Premium and Vintage are weaker and non-monotonic, so the model does not apply a simple rule such as “higher premium means higher response.”
+
+### Boundary-customer findings
+
+The last selected customer at rank 38,110 had a score of approximately `0.7920018434`. The first unselected customer at rank 38,111 had a score of approximately `0.7920017617`. The difference is approximately `0.0000000817`, which is operationally indistinguishable at the capacity boundary.
+
+The local explanations showed that boundary customers were mainly elevated by `Previously_Insured = 0`, vehicle-damage status, age, and selected channel or region levels. Small negative contributions from Annual Premium, Vintage, Gender, or Vehicle Age determined the precise ordering among near-tied customers.
+
+The broad top-10% group is therefore useful for outreach prioritization, but the exact identity of the final few customers is fragile. A stable sort makes the result reproducible; it does not mean that the last selected customer is meaningfully more promising than the first unselected customer.
+
+### Limitations and operational use
+
+SHAP values are in the model's raw output space, not percentage points. They explain how features move an individual score relative to the model's baseline. They are not causal explanations, treatment-effect estimates, or evidence that changing a customer feature would change the customer's response.
+
+Before production-oriented use:
+
+- verify that `Previously_Insured`, Vehicle Damage, Age, Region Code, and Sales Channel are available at score-generation time and are not derived from the response;
+- present aggregated raw-feature reason codes rather than exposing one-hot implementation details;
+- define a deterministic tie policy and consider a review buffer around the top-10% cutoff;
+- perform selection-rate, performance, and calibration checks across gender, age, region, and channel segments;
+- calibrate the output only if the product presents it as a probability rather than as a ranking score;
+- monitor feature drift, score drift, and delayed campaign outcomes after deployment.
+
+The SHAP results do not justify changing the frozen model or rerunning the untouched test evaluation. They document the behavior of the approved model. Future causal improvement requires campaign treatment/control data and potentially an uplift or treatment-effect model.
