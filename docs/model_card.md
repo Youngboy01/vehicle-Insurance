@@ -258,6 +258,20 @@ The model card should be updated before a model is promoted to a materially diff
 - Move training into a separate durable job or workflow.
 - Add monitoring, rollback, and model-version lineage.
 
+### Future probability calibration work
+
+The current API may retain the field name `probability` for compatibility, but the value must be described as an estimated positive-class response score until calibration is evaluated. A future calibration study should:
+
+- use validation data that is independent of the model-fitting data;
+- compare reliability curves and predicted versus observed response rates;
+- report Brier score, log loss, expected calibration error, calibration slope, and intercept;
+- assess whether calibration changes the top-K ranking or only the score scale;
+- version any adopted calibrator together with the model and preprocessing artifact;
+- evaluate the final calibrated package under a fresh, untouched holdout protocol;
+- update the API, UI, README, and model card only if the calibrated output is approved as a probability.
+
+Until this work is complete, users should interpret the value for relative ranking, not as a promise that a score of 0.70 means exactly 70% of comparable customers will respond.
+
 ### Future extension with additional data
 
 When treatment/control campaign data becomes available:

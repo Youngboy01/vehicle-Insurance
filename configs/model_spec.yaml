@@ -1,0 +1,92 @@
+version: 1
+status: frozen_candidate
+
+project:
+  purpose: vehicle_insurance_cross_sell_response_prediction
+  target: Response
+  decision_unit: one_customer_campaign_opportunity
+
+model:
+  family: LightGBM
+  class_weighting:
+    method: scale_pos_weight
+    scale_pos_weight: 7.159039820166988
+  hyperparameters:
+    boosting_type: gbdt
+    objective: binary
+    n_estimators: 700
+    learning_rate: 0.03
+    num_leaves: 31
+    max_depth: -1
+    min_child_samples: 100
+    min_child_weight: 0.001
+    min_split_gain: 0.0
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.8
+    reg_alpha: 1.0
+    reg_lambda: 1.0
+    random_state: 42
+    n_jobs: -1
+    verbosity: -1
+
+features:
+  identifier:
+    - id
+  raw_inputs:
+    - Gender
+    - Age
+    - Driving_License
+    - Region_Code
+    - Previously_Insured
+    - Vehicle_Age
+    - Vehicle_Damage
+    - Annual_Premium
+    - Policy_Sales_Channel
+    - Vintage
+  target:
+    - Response
+  categorical:
+    - Gender
+    - Vehicle_Age
+    - Vehicle_Damage
+    - Region_Code
+    - Policy_Sales_Channel
+  passthrough:
+    - Age
+    - Annual_Premium
+    - Vintage
+    - Driving_License
+    - Previously_Insured
+  preprocessing:
+    categorical_encoding: one_hot
+    one_hot_drop: null
+    handle_unknown: ignore
+    remainder: drop
+    transformed_feature_count: 220
+
+selection:
+  score_name: probability
+  capacity_type: top_k_percentage
+  top_k_percentage: 10
+  rule: highest_scoring_customers
+  tie_break: ascending_id
+  k_calculation: floor
+
+data_protocol:
+  target_available_during_training: true
+  target_available_during_live_scoring: false
+  split_protocol: train_validation_test
+  test_evaluation: completed_once
+
+artifacts:
+  mlflow_tracking:
+    run_id: dc28826afdcc4e5cbce068db62439094
+    logged_model_id: m-3aacf46fc018452ab9aab96033eb7e56
+    model_uri: models:/m-3aacf46fc018452ab9aab96033eb7e56
+    source_run_id: dc28826afdcc4e5cbce068db62439094
+
+future_work:
+  - probability_calibration_study
+  - configurable_company_specific_capacity
+  - additional_feature_mapping_or_retraining_for_customer_schemas
