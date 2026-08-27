@@ -1,17 +1,181 @@
-drop_columns:
-  - id
+version: "1.0.0"
+schema_name: vehicle_insurance_cross_sell_data_contract
+status: active_phase_1_benchmark_contract
 
-# for data transformation
-num_features:
-  - Age
-  - Vintage
+project:
+  purpose: vehicle_insurance_cross_sell_response_prediction
+  decision_unit: one_customer_campaign_opportunity
+  company_partner_onboarded: false
 
-#for using robust scaler
-rs_columns:
-  - Annual_Premium
+source:
+  type: benchmark_dataset_in_mongodb
+  system: MongoDB Atlas
+  database: INSURANCE
+  collection: INSURANCE_DATA
+  repository_reference: notebooks/data.csv
+  repository_reference_is_authoritative_for_mongodb_contents: false
 
-# for using one hot encoding
-cat_features:
-  - Gender
-  - Vehicle_Age
-  - Vehicle_Damage
+schemas:
+  training:
+    required_columns: [id, Gender, Age, Driving_License, Region_Code, Previously_Insured, Vehicle_Age, Vehicle_Damage, Annual_Premium, Policy_Sales_Channel, Vintage, Response]
+    target_required: true
+    target_forbidden: false
+    allow_unexpected_columns: false
+    metadata_location: separate_envelope_or_lineage_manifest
+  scoring:
+    required_columns: [id, Gender, Age, Driving_License, Region_Code, Previously_Insured, Vehicle_Age, Vehicle_Damage, Annual_Premium, Policy_Sales_Channel, Vintage]
+    target_required: false
+    target_forbidden: true
+    forbidden_columns: [Response]
+    forbidden_outcome_columns:
+      - Response
+      - conversion
+      - converted
+      - offer_accepted
+      - offer_accepted_date
+      - contacted
+      - campaign_outcome
+      - claim_status
+      - policy_issued_after_offer
+    allow_unexpected_columns: false
+    metadata_location: separate_envelope_or_lineage_manifest
+
+  model_bound_data:
+    operational_metadata_in_records: false
+    metadata_location: separate_envelope_or_lineage_manifest
+    metadata_reaches_preprocessing: false
+    metadata_reaches_model: false
+
+identifier:
+  name: id
+  type: integer
+  required: true
+  minimum: 1
+  unique_within_input: true
+  predictive_feature: false
+  use_for_tie_breaking: true
+
+features:
+  canonical_order: [Gender, Age, Driving_License, Region_Code, Previously_Insured, Vehicle_Age, Vehicle_Damage, Annual_Premium, Policy_Sales_Channel, Vintage]
+  target:
+    name: Response
+    type: integer
+    required_for_training: true
+    forbidden_for_scoring: true
+    allowed_values: [0, 1]
+  definitions:
+    Gender: {type: string, required: true, allowed_values: [Male, Female], role: categorical}
+    Age: {type: integer, required: true, minimum: 18, maximum: 100, constraint_class: general_safety_range, partner_configurable: true, role: numeric}
+    Driving_License: {type: integer, required: true, allowed_values: [0, 1], role: binary}
+    Region_Code: {type: numeric_category, required: true, minimum: 0, finite: true, constraint_class: structural_plus_partner_domain, partner_configurable: true, role: categorical}
+    Previously_Insured: {type: integer, required: true, allowed_values: [0, 1], role: binary}
+    Vehicle_Age: {type: string, required: true, allowed_values: ["< 1 Year", "1-2 Year", "> 2 Years"], role: categorical}
+    Vehicle_Damage: {type: string, required: true, allowed_values: [Yes, No], role: categorical}
+    Annual_Premium: {type: number, required: true, minimum_exclusive: 0, finite: true, constraint_class: fixed_structural_rule, partner_upper_bound_configurable: true, role: numeric}
+    Policy_Sales_Channel: {type: numeric_category, required: true, minimum_exclusive: 0, finite: true, constraint_class: structural_plus_partner_domain, partner_configurable: true, role: categorical}
+    Vintage: {type: integer, required: true, minimum: 0, finite: true, constraint_class: fixed_structural_rule, partner_upper_bound_configurable: true, role: numeric}
+
+  range_evidence:
+    source: exact_mongodb_snapshot_used_for_run
+    benchmark_observed_ranges: runtime_required_from_mongodb_snapshot
+    observed_ranges_are_universal_production_limits: false
+    partner_business_ranges: configured_only_after_onboarding_approval
+
+validation:
+  field_names_case_sensitive: true
+  missing_values: reject
+  null_values: reject
+  empty_strings: reject
+  whitespace_only_strings: reject
+  nan_values: reject
+  infinite_values: reject
+  implicit_imputation: forbidden
+  implicit_rounding: forbidden
+  implicit_clipping: forbidden
+  unexpected_columns: reject
+  duplicate_ids: reject
+  missing_ids: reject
+  training_requires_both_target_classes: true
+  forbidden_scoring_columns:
+    - Response
+    - conversion
+    - converted
+    - offer_accepted
+    - offer_accepted_date
+    - contacted
+    - campaign_outcome
+    - claim_status
+    - policy_issued_after_offer
+  forbidden_training_outcome_columns:
+    - conversion
+    - converted
+    - offer_accepted
+    - offer_accepted_date
+    - contacted
+    - campaign_outcome
+    - claim_status
+    - policy_issued_after_offer
+  unknown_categories:
+    encoder_behavior: ignore_during_transformation
+    benchmark_scoring: accept_valid_unseen_and_encode_all_zero
+    partner_production: reject_until_domain_approval
+    malformed_or_invalid: reject_before_transformation
+  error_response: {include_error_code: true, include_message: true, include_affected_fields: true, expose_stack_trace: false}
+
+preprocessing:
+  categorical_features: [Gender, Vehicle_Age, Vehicle_Damage, Region_Code, Policy_Sales_Channel]
+  numeric_features: [Age, Annual_Premium, Vintage]
+  binary_features: [Driving_License, Previously_Insured]
+  categorical_encoding: one_hot
+  one_hot_drop: null
+  handle_unknown: ignore
+  numeric_scaling: none
+  remainder: drop
+  transformed_feature_count: 220
+  transformed_feature_order_source: fitted_pipeline
+  model_input_order_source: fitted_pipeline
+  manual_transformed_feature_order_reconstruction: forbidden
+  fit_during_scoring: false
+
+selection:
+  score_name: response_propensity_score
+  api_compatibility_name: probability
+  calibrated_probability: false
+  capacity_type: top_k_percentage
+  default_percentage: 10
+  rule: highest_scoring_customers
+  sort_order: [score_descending, id_ascending]
+  k_calculation: floor
+  selected_count: exactly_k
+  extra_recommendations: deferred
+  edge_cases:
+    fixed_count_greater_than_n:
+      behavior: select_all_and_warn
+      effective_k: min_requested_k_and_n
+      warning_required: true
+    percentage_resulting_in_zero:
+      behavior: select_zero_and_warn
+      k_calculation: floor
+      minimum_selected: 0
+      warning_required: true
+
+data_protocol:
+  target_available_during_training: true
+  target_available_during_live_scoring: false
+  split_protocol: stratified_80_10_10
+  random_state: 42
+  test_evaluation: completed_once
+  partner_freshness_validation: inactive_until_onboarding
+
+provenance:
+  location: separate_envelope_or_lineage_manifest
+  included_in_model_bound_records: false
+  snapshot_id: runtime_required
+  data_as_of: runtime_required
+  extracted_at: runtime_required
+  content_hash: {algorithm: SHA-256, value: runtime_required_for_mongodb_snapshot}
+
+feature_mapping:
+  status: not_active
+  approved_mappings: []
+  approval_required_before_use: true

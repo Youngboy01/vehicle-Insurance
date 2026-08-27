@@ -1,4 +1,5 @@
 version: 1
+contract_version: "1.0.0"
 status: frozen_candidate
 
 project:
@@ -66,7 +67,8 @@ features:
     transformed_feature_count: 220
 
 selection:
-  score_name: probability
+  score_name: response_propensity_score
+  api_compatibility_name: probability
   capacity_type: top_k_percentage
   top_k_percentage: 10
   rule: highest_scoring_customers
@@ -76,8 +78,56 @@ selection:
 data_protocol:
   target_available_during_training: true
   target_available_during_live_scoring: false
-  split_protocol: train_validation_test
+  split_protocol: stratified_80_10_10
   test_evaluation: completed_once
+
+evaluation_policy:
+  purpose: production_candidate_acceptance_and_release_readiness
+  primary_metrics:
+    - precision_at_10pct
+    - lift_at_10pct
+  supporting_metrics:
+    - recall_at_10pct
+    - pr_auc
+    - roc_auc
+  threshold_metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1_score
+  frozen_reference_metrics:
+    pr_auc: 0.373937
+    roc_auc: 0.859726
+    precision_at_10pct: 0.396221
+    recall_at_10pct: 0.323271
+    lift_at_10pct: 3.232797
+  final_test:
+    usage: reporting_only
+    reusable_for_promotion: false
+    evaluation_count: 1
+  stability:
+    required: true
+    method: repeated_stratified_cross_validation
+    folds: 3
+    repeats: 3
+    selection_metrics: [pr_auc, precision_at_10pct, recall_at_10pct, lift_at_10pct]
+  segment_analysis:
+    required_before_production_claims: true
+    minimum_segment_sample_size: configurable_by_audit_policy
+    insufficient_sample_behavior: suppress_or_group_segment
+  parity:
+    source_frozen_prediction_parity_required: true
+    block_release_on_failure: true
+  missing_metric_behavior: reject_candidate
+  promotion:
+    enabled: false
+    status: blocked_until_practical_improvement_threshold_approved
+    required_before_enablement:
+      - validation_based_comparison
+      - practical_improvement_or_non_inferiority_threshold
+      - stability_gate
+      - source_frozen_parity
+      - required_segment_review
 
 artifacts:
   mlflow_tracking:
