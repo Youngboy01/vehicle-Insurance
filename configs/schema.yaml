@@ -70,7 +70,7 @@ features:
     Region_Code: {type: numeric_category, required: true, minimum: 0, finite: true, constraint_class: structural_plus_partner_domain, partner_configurable: true, role: categorical}
     Previously_Insured: {type: integer, required: true, allowed_values: [0, 1], role: binary}
     Vehicle_Age: {type: string, required: true, allowed_values: ["< 1 Year", "1-2 Year", "> 2 Years"], role: categorical}
-    Vehicle_Damage: {type: string, required: true, allowed_values: [Yes, No], role: categorical}
+    Vehicle_Damage: {type: string, required: true, allowed_values: ["Yes", "No"], role: categorical}
     Annual_Premium: {type: number, required: true, minimum_exclusive: 0, finite: true, constraint_class: fixed_structural_rule, partner_upper_bound_configurable: true, role: numeric}
     Policy_Sales_Channel: {type: numeric_category, required: true, minimum_exclusive: 0, finite: true, constraint_class: structural_plus_partner_domain, partner_configurable: true, role: categorical}
     Vintage: {type: integer, required: true, minimum: 0, finite: true, constraint_class: fixed_structural_rule, partner_upper_bound_configurable: true, role: numeric}

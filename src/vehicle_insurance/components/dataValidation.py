@@ -1,46 +1,26 @@
-import os
 import json
+import os
 import sys
 
 import pandas as pd
-import pandera.pandas as pa
-from pandera import Column, DataFrameSchema, Check
 from pandas import DataFrame
 
+from vehicle_insurance.constants import SCHEMA_FILE_PATH
+from vehicle_insurance.contracts.data_contract import (
+    DataContractValidator,
+)
+from vehicle_insurance.entities.artifact_entity import (
+    DataIngestionArtifact,
+    DataValidationArtifact,
+)
+from vehicle_insurance.entities.config_entity import DataValidationConfig
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
-from vehicle_insurance.utils import read_yaml_file
-from vehicle_insurance.entities.config_entity import DataValidationConfig
-from vehicle_insurance.entities.artifact_entity import (
-    DataValidationArtifact,
-    DataIngestionArtifact,
-)
-from vehicle_insurance.constants import SCHEMA_FILE_PATH
-
 
 logger = setup_logger()
 
 
 class DataValidation:
-    schema = DataFrameSchema(
-        columns={
-            "id": Column(int, Check(lambda x: x > 0)),
-            "Gender": Column(str, checks=Check.isin(["Male", "Female"])),
-            "Age": Column(int, Check(lambda x: x > 0)),
-            "Driving_License": Column(int, checks=Check.isin([0, 1])),
-            "Region_Code": Column(float, checks=Check.greater_than_or_equal_to(0)),
-            "Previously_Insured": Column(int, checks=Check.isin([0, 1])),
-            "Vehicle_Age": Column(
-                str, checks=Check.isin(["< 1 Year", "1-2 Year", "> 2 Years"])
-            ),
-            "Vehicle_Damage": Column(str, checks=Check.isin(["Yes", "No"])),
-            "Annual_Premium": Column(float, checks=Check.greater_than(0)),
-            "Policy_Sales_Channel": Column(float, checks=Check.greater_than(0)),
-            "Vintage": Column(int, checks=Check.greater_than_or_equal_to(0)),
-            "Response": Column(int, checks=Check.isin([0, 1])),
-        }
-    )
-
     def __init__(
         self,
         data_validation_config: DataValidationConfig,
@@ -49,7 +29,13 @@ class DataValidation:
         try:
             self.data_ingestion_artifact = data_ingestion_artifact
             self.data_validation_config = data_validation_config
-            self._schema_config = read_yaml_file(SCHEMA_FILE_PATH)
+            self.contract_validator = DataContractValidator(
+                schema_path=SCHEMA_FILE_PATH
+            )
+            logger.info(
+                "Data contract loaded successfully: version=%s",
+                self.contract_validator.contract_version,
+            )
         except Exception as e:
             logger.error(f"Error occurred while initializing DataValidation: {e}")
             raise VehicleInsuranceException(e, sys) from e
@@ -62,24 +48,47 @@ class DataValidation:
             logger.error(f"Error occurred while reading data from {file_path}: {e}")
             raise VehicleInsuranceException(e, sys) from e
 
-    def validate_data(self, dataframe: DataFrame, df_label: str):
+    def validate_data(
+        self, dataframe: DataFrame, df_label: str, mode: str = "training"
+    ):
         try:
-            self.schema.validate(dataframe, lazy=True)
-            logger.info(f"{df_label} data validation successful.")
-            return True, []
-        except pa.errors.SchemaErrors as e:
-            failure_df = e.failure_cases[
-                ["schema_context", "column", "check", "failure_case", "index"]
-            ]
-            errors = failure_df.to_dict(orient="records")
+            self.contract_validator.validate(dataframe, mode)
             logger.info(
-                f"{df_label} : pandera balidation failed with {len(errors)} errors."
+                "%s data contract validation successful",
+                df_label,
             )
-            for error in errors:
-                logger.info(
-                    f"[{df_label}] Column: {error['column']}, Check: {error['check']}, Failure Case: {error['failure_case']}, Row_Index: {error['index']}"
+            return True, []
+        except VehicleInsuranceException as error:
+            logger.error(
+                "%s data contract validation failed: %s",
+                df_label,
+                error,
+            )
+
+            cause = error.__cause__
+            failure_cases = getattr(cause, "failure_cases", None)
+
+            if failure_cases is not None:
+                errors = (
+                    failure_cases.astype(object)
+                    .where(
+                        failure_cases.notna(),
+                        None,
+                    )
+                    .to_dict(orient="records")
                 )
-            return False, errors
+            else:
+                errors = [
+                    {
+                        "schema_context": "data_contract",
+                        "column": None,
+                        "check": "contract_validation",
+                        "failure_case": str(error),
+                        "index": None,
+                    }
+                ]
+
+        return False, errors
 
     def initiate_data_validation(self) -> DataValidationArtifact:
         try:
@@ -88,7 +97,9 @@ class DataValidation:
             train_df = DataValidation.read_data(
                 self.data_ingestion_artifact.trained_file_path
             )
-            is_train_valid, train_errors = self.validate_data(train_df, "Training df")
+            is_train_valid, train_errors = self.validate_data(
+                train_df, "Training df", mode="training"
+            )
             if not is_train_valid:
                 validation_error_msg += (
                     f"Training data validation failed with {len(train_errors)} errors. "
@@ -99,7 +110,9 @@ class DataValidation:
             test_df = DataValidation.read_data(
                 self.data_ingestion_artifact.test_file_path
             )
-            is_test_valid, test_errors = self.validate_data(test_df, "Testing df")
+            is_test_valid, test_errors = self.validate_data(
+                test_df, "Testing df", mode="training"
+            )
             if not is_test_valid:
                 validation_error_msg += (
                     f"Testing data validation failed with {len(test_errors)} errors."
@@ -113,13 +126,14 @@ class DataValidation:
                 exist_ok=True,
             )
             validation_report = {
+                "contract_version": self.contract_validator.contract_version,
                 "training_data": {"is_valid": is_train_valid, "errors": train_errors},
                 "testing_data": {"is_valid": is_test_valid, "errors": test_errors},
                 "overall_status": validation_status,
                 "message": validation_error_msg,
             }
             with open(self.data_validation_config.report_file_path, "w") as report_file:
-                json.dump(validation_report, report_file)
+                json.dump(validation_report, report_file, indent=2, default=str)
 
             data_validation_artifact = DataValidationArtifact(
                 report_file_path=self.data_validation_config.report_file_path,
