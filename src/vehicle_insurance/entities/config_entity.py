@@ -56,6 +56,11 @@ class DataTransformationConfig:
         DATA_TRANSFORMATION_TRANSFORMED_DATA_DIR,
         DATA_TRANSFORMATION_TRANSFORMED_TRAIN_FILE_NAME,
     )
+    transformed_validation_file_path: str = os.path.join(
+        data_transformation_dir,
+        DATA_TRANSFORMATION_TRANSFORMED_DATA_DIR,
+        DATA_TRANSFORMATION_TRANSFORMED_VALIDATION_FILE_NAME,
+    )
     transformed_test_file_path: str = os.path.join(
         data_transformation_dir,
         DATA_TRANSFORMATION_TRANSFORMED_DATA_DIR,
