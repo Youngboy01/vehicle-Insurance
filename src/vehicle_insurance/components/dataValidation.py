@@ -120,7 +120,29 @@ class DataValidation:
             else:
                 validation_error_msg += "Testing data validation successful."
 
-            validation_status = is_train_valid and is_test_valid
+            validation_df = DataValidation.read_data(
+                self.data_ingestion_artifact.validation_file_path
+            )
+            is_validation_valid, validation_errors = self.validate_data(
+                validation_df,
+                "Validation df",
+                mode="training",
+            )
+            if not is_validation_valid:
+                validation_error_msg += (
+                    " Validation data validation failed with "
+                    f"{len(validation_errors)} errors."
+                )
+            else:
+                validation_error_msg += (
+                    " Validation data validation successful."
+                )
+
+            validation_status = (
+                is_train_valid
+                and is_validation_valid
+                and is_test_valid
+            )
             os.makedirs(
                 os.path.dirname(self.data_validation_config.report_file_path),
                 exist_ok=True,
@@ -129,6 +151,10 @@ class DataValidation:
                 "contract_version": self.contract_validator.contract_version,
                 "training_data": {"is_valid": is_train_valid, "errors": train_errors},
                 "testing_data": {"is_valid": is_test_valid, "errors": test_errors},
+                "validation_data": {
+                    "is_valid": is_validation_valid,
+                    "errors": validation_errors,
+                },
                 "overall_status": validation_status,
                 "message": validation_error_msg,
             }

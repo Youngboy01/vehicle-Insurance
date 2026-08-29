@@ -163,6 +163,9 @@ data_protocol:
   target_available_during_training: true
   target_available_during_live_scoring: false
   split_protocol: stratified_80_10_10
+  train_ratio: 0.8
+  validation_ratio: 0.1
+  test_ratio: 0.1
   random_state: 42
   test_evaluation: completed_once
   partner_freshness_validation: inactive_until_onboarding
