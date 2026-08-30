@@ -123,6 +123,42 @@ evaluation_policy:
   parity:
     source_frozen_prediction_parity_required: true
     block_release_on_failure: true
+    required_evidence:
+      - split_id_sets_match
+      - prediction_order_match
+      - maximum_absolute_prediction_error
+    maximum_absolute_prediction_error: 1.0e-12
+  acceptance_thresholds:
+    status: provisional_pending_owner_approval
+    # These are explicit Phase 1 benchmark gates, not universal business
+    # guarantees. They are intentionally versioned with the model spec.
+    candidate_validation_minimums:
+      precision_at_10pct: 0.38
+      lift_at_10pct: 3.0
+      recall_at_10pct: 0.30
+      pr_auc: 0.35
+      roc_auc: 0.84
+    stability_mean_minimums:
+      precision_at_10pct: 0.38
+      lift_at_10pct: 3.0
+      recall_at_10pct: 0.30
+      pr_auc: 0.35
+    stability_maximum_std:
+      precision_at_10pct: 0.025
+      lift_at_10pct: 0.20
+      recall_at_10pct: 0.025
+      pr_auc: 0.025
+    champion_comparison:
+      primary_improvement_required: true
+      minimum_primary_improvement:
+        precision_at_10pct: 0.005
+        lift_at_10pct: 0.05
+      non_inferiority_tolerance:
+        precision_at_10pct: 0.005
+        lift_at_10pct: 0.05
+        recall_at_10pct: 0.01
+        pr_auc: 0.01
+        roc_auc: 0.005
   missing_metric_behavior: reject_candidate
   promotion:
     enabled: false

@@ -155,11 +155,29 @@ The historical notebook final-test reference is exactly `0.373937` PR-AUC, `0.85
 
 Repeated stability evaluation used 3 folds and 3 repeats on the training split with preprocessing refit inside each fold. The resulting means were PR-AUC `0.369748`, Precision@10% `0.397374`, Recall@10% `0.324190`, and Lift@10% `3.242187`.
 
+### Provisional acceptance thresholds
+
+The evaluator uses the following explicit Phase 1 benchmark thresholds from `configs/model_spec.yaml`. They are provisional engineering gates, not universal business guarantees, and require owner approval before production promotion:
+
+| Gate | Provisional rule |
+|---|---|
+| Candidate validation Precision@10% | at least `0.38` |
+| Candidate validation Lift@10% | at least `3.00` |
+| Candidate validation Recall@10% | at least `0.30` |
+| Candidate validation PR-AUC | at least `0.35` |
+| Candidate validation ROC-AUC | at least `0.84` |
+| Stability mean | same minimums for PR-AUC, Precision@10%, Recall@10%, and Lift@10% |
+| Stability dispersion | standard deviation at most `0.025` for PR-AUC, Precision@10%, and Recall@10%; at most `0.20` for Lift@10% |
+| Champion comparison | no configured non-inferiority failure and at least one primary metric improves by `0.005` Precision@10% or `0.05` Lift@10% |
+| Source-frozen prediction parity | split IDs and prediction order must match; maximum absolute prediction error at most `1e-12` |
+
+If no valid Champion exists, the evaluator applies the absolute validation and stability gates without inventing a Champion comparison. If a Champion alias exists but its required validation or lineage evidence is missing, evaluation fails closed. Promotion remains disabled.
+
 ### Evaluation limitations
 
 The corrected trainer now matches the frozen notebook split semantics and final-fit workflow. The final test set is evaluated once after candidate and operating-point decisions. The production acceptance evaluator is still being aligned: it must use validation top-K metrics, stability, source-frozen parity, and segment checks rather than test recall.
 
-The current model specification names the required metric families but does not yet define numeric practical-improvement or non-inferiority tolerances for future challenger promotion. Therefore, the latest candidate remains unpromoted.
+The current model specification now defines provisional numeric practical-improvement and non-inferiority tolerances. They remain pending owner approval, and the latest candidate remains unpromoted because source-frozen prediction parity is not yet verified and promotion is disabled.
 
 ## 9. Operating point and campaign decisions
 
@@ -243,7 +261,7 @@ The model card should be updated before a model is promoted to a materially diff
 ### Required before claiming a credible model
 
 - Implement the validation-based evaluation and release-readiness gate.
-- Define practical-improvement or non-inferiority tolerances for the primary and supporting metrics.
+- Obtain owner approval for the provisional practical-improvement and non-inferiority tolerances in `configs/model_spec.yaml`.
 - Complete source-frozen split-ID and prediction parity checks where reference artifacts are available.
 - Complete required segment-level performance review.
 - Validate data provenance, snapshot metadata, duplicates, split overlap, and target prevalence.

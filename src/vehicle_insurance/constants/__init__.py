@@ -46,9 +46,7 @@ MLFLOW_TRACKING_PASSWORD_KEY: str = "MLFLOW_TRACKING_PASSWORD"
 MLFLOW_EXPERIMENT_NAME: str = "Vehicle_Insurance"
 MLFLOW_REGISTER_MODEL_NAME: str = "Vehicle_Insurance_LGBM"
 MLFLOW_CHAMPION_ALIAS: str = "Champion"
-MLFLOW_CHALLENGER_ALIAS: str = "Challenger"
 
 # model evaluation related constants
 MODEL_EVALUATION_DIR_NAME: str = "model_evaluation"
 MODEL_EVALUATION_REPORT_FILE_NAME: str = "report.json"
-MODEL_EVALUATION_CHANGED_THRESHOLD_SCORE: float = 0.0

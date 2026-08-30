@@ -1,25 +1,26 @@
 import sys
-from vehicle_insurance.logger.logger_config import setup_logger
-from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
+
 from vehicle_insurance.components.dataIngestion import DataIngestion
-from vehicle_insurance.components.dataValidation import DataValidation
 from vehicle_insurance.components.dataTransformation import DataTransformation
-from vehicle_insurance.components.modelTrainer import ModelTrainer
+from vehicle_insurance.components.dataValidation import DataValidation
 from vehicle_insurance.components.modelEvaluation import ModelEvaluation
-from vehicle_insurance.entities.config_entity import (
-    DataIngestionConfig,
-    DataValidationConfig,
-    DataTransformationConfig,
-    ModelTrainerConfig,
-    ModelEvaluationConfig,
-)
+from vehicle_insurance.components.modelTrainer import ModelTrainer
 from vehicle_insurance.entities.artifact_entity import (
     DataIngestionArtifact,
-    DataValidationArtifact,
     DataTransformationArtifact,
-    ModelTrainerArtifact,
+    DataValidationArtifact,
     ModelEvaluationArtifact,
+    ModelTrainerArtifact,
 )
+from vehicle_insurance.entities.config_entity import (
+    DataIngestionConfig,
+    DataTransformationConfig,
+    DataValidationConfig,
+    ModelEvaluationConfig,
+    ModelTrainerConfig,
+)
+from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
+from vehicle_insurance.logger.logger_config import setup_logger
 
 logger = setup_logger()
 
@@ -42,7 +43,7 @@ class TrainingPipeline:
                 data_ingestion_config=self.data_ingestion_config
             )
             data_ingestion_artifact = data_ingestion.initiate_data_ingestion()
-            logger.info(f"Got the train and test file path: {data_ingestion_artifact}")
+            logger.info("Received data ingestion artifact: %s", data_ingestion_artifact)
             logger.info(
                 f"Data ingestion component completed with artifact: {data_ingestion_artifact}"
             )
@@ -90,13 +91,16 @@ class TrainingPipeline:
             raise VehicleInsuranceException(e, sys) from e
 
     def start_model_training(
-        self, data_transformation_artifact: DataTransformationArtifact
+        self,
+        data_ingestion_artifact: DataIngestionArtifact,
+        data_transformation_artifact: DataTransformationArtifact,
     ) -> ModelTrainerArtifact:
         try:
             logger.info("Starting model training component")
             model_trainer = ModelTrainer(
                 model_trainer_config=self.model_trainer_config,
                 data_transformation_artifact=data_transformation_artifact,
+                data_ingestion_artifact=data_ingestion_artifact,
             )
             model_trainer_artifact = model_trainer.train()
             logger.info(
@@ -134,18 +138,23 @@ class TrainingPipeline:
                 data_validation_artifact=data_validation_artifact,
             )
             model_trainer_artifact = self.start_model_training(
+                data_ingestion_artifact=data_ingestion_artifact,
                 data_transformation_artifact=data_transformation_artifact
             )
             model_evaluation_artifact = self.start_model_evaluation(
                 model_trainer_artifact=model_trainer_artifact
             )
-            if not model_evaluation_artifact.is_model_accepted:
+            if not model_evaluation_artifact.evaluation_passed:
                 logger.info(
-                    "Pipeline completed - challenger model did not outperform the champion model. Existing champion model retained."
+                    "Pipeline completed - candidate failed one or more evaluation gates; no promotion was performed."
+                )
+            elif model_evaluation_artifact.promotion_status == "disabled":
+                logger.info(
+                    "Pipeline completed - candidate passed evaluation gates, but promotion is disabled."
                 )
             else:
                 logger.info(
-                    "Pipeline completed - challenger model outperformed the champion model. Challenger model promoted to champion."
+                    "Pipeline completed - candidate passed evaluation gates; promotion was not performed by this evaluator."
                 )
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e

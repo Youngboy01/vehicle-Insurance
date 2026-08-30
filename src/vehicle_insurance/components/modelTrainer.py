@@ -231,6 +231,13 @@ class ModelTrainer:
             "reference_final_model_uri": self.model_spec["artifacts"][
                 "mlflow_tracking"
             ]["reference_final_model_uri"],
+            "source_frozen_parity": {
+                "status": "not_verified",
+                "reason": (
+                    "Direct split-ID and prediction-array comparison against the "
+                    "source-frozen reference is pending"
+                ),
+            },
         }
 
     def _model_parameters(self) -> dict:
@@ -651,6 +658,7 @@ class ModelTrainer:
                     "final_fit_rows": len(X_final_raw),
                     "final_transformed_feature_count": final_feature_count,
                     "final_transformed_feature_names": final_feature_names,
+                    "model_input_feature_order": final_feature_names,
                     "test_evaluation_count": 1,
                     "test_evaluation_model": "final_pipeline",
                 }
@@ -803,6 +811,7 @@ class ModelTrainer:
                 registered_model_name=None,
                 registered_model_version=None,
                 stability_metrics=stability_metrics,
+                lineage=lineage,
             )
             logger.info("Model Trainer completed with artifact: %s", artifact)
             return artifact

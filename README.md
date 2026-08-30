@@ -191,7 +191,7 @@ The transformer is fit on training data only, applied to validation and test dat
 Loads the frozen LightGBM parameters and `scale_pos_weight` from `configs/model_spec.yaml`. The trainer first fits a train-only candidate for validation and repeated stability analysis, then clones and refits the preprocessing/model pipeline on train plus validation. The untouched test split is evaluated once through that final pipeline. Metrics, feature order, model URI, data hash, Git/dependency versions, and MLflow lineage are persisted locally and logged to MLflow.
 
 ### 5. Model Evaluation
-The evaluation component is not yet aligned with the current trainer and model specification. The replacement must compare candidate validation metrics using primary top-K measures (`precision_at_10pct` and `lift_at_10pct`), supporting metrics, repeated-CV stability, lineage/source-frozen parity, and required segment checks. Final-test metrics are reporting-only. Registry alias mutation remains disabled until explicit acceptance thresholds and promotion controls are approved.
+The evaluation component now compares candidate validation metrics using primary top-K measures (`precision_at_10pct` and `lift_at_10pct`), supporting metrics, repeated-CV stability, lineage/source-frozen parity, and Champion validation evidence when available. Provisional numeric thresholds are versioned in `configs/model_spec.yaml` and remain pending owner approval. Final-test metrics are reporting-only. Registry alias mutation remains disabled while `promotion.enabled` is `false`.
 
 ---
 

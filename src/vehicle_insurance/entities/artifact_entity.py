@@ -37,13 +37,26 @@ class ModelTrainerArtifact:
     registered_model_name: Optional[str]
     registered_model_version: Optional[str]
     stability_metrics: dict
+    lineage: dict
 
 
 @dataclass
 class ModelEvaluationArtifact:
-    is_model_accepted: bool
+    evaluation_passed: bool
+    decision: str
+    promotion_status: str
+    promotion_performed: bool
+    candidate_run_id: str
+    candidate_model_id: str
+    candidate_model_uri: str
+    champion_run_id: Optional[str]
     champion_model_version: Optional[str]
-    challenger_model_version: str
-    champion_recall: Optional[float]
-    challenger_recall: float
+    candidate_validation_metrics: dict
+    champion_validation_metrics: Optional[dict]
+    candidate_test_metrics: dict
+    stability_metrics: dict
+    metric_comparison: dict
+    gate_results: dict
+    reason_codes: list[str]
+    lineage: dict
     evaluation_report_file_path: str
