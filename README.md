@@ -279,10 +279,10 @@ RELOAD_TOKEN=<any secret string — protects the /reload endpoint>
 
 ```cmd
 cd /d D:\projVehicleInsurance\vehicle-Insurance
-uv run python tests\run_real_training.py
+uv run python -m vehicle_insurance.pipeline.training_pipeline
 ```
 
-The private benchmark runner (currently kept under `tests\run_real_training.py`) executes ingestion, validation, transformation, and model training. It is the verified path for reproducing the current benchmark while evaluation/promotion orchestration is being aligned; this helper is intentionally ignored and is not a public production entry point. Artifacts (raw data, splits, transformed arrays, preprocessor, trained model, metrics, and lineage) are saved under a timestamped `artifact/` directory. Run from the repository root so relative paths resolve under the D: repository. Do not run the full orchestrator for release decisions until the evaluation component is updated.
+The public module entry point executes ingestion, validation, transformation, model training, and evaluation in sequence. It returns an evaluation artifact and saves raw data, splits, transformed arrays, preprocessor, trained model, metrics, evaluation report, and lineage under a timestamped `artifact/` directory. Run from the repository root so relative paths resolve under the D: repository. Promotion remains disabled until the evaluation policy and source-frozen parity gates are approved. The private `tests\run_real_training.py` helper remains available for stage-level benchmark runs when evaluation is not required.
 
 ---
 

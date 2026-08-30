@@ -1,5 +1,7 @@
 import sys
 
+from dotenv import load_dotenv
+
 from vehicle_insurance.components.dataIngestion import DataIngestion
 from vehicle_insurance.components.dataTransformation import DataTransformation
 from vehicle_insurance.components.dataValidation import DataValidation
@@ -26,8 +28,13 @@ logger = setup_logger()
 
 
 class TrainingPipeline:
+    """Orchestrate the complete vehicle-insurance training workflow."""
+
     def __init__(self):
         try:
+            # Load local development configuration without overriding values
+            # supplied by the execution environment or deployment platform.
+            load_dotenv(override=False)
             self.data_ingestion_config = DataIngestionConfig()
             self.data_validation_config = DataValidationConfig()
             self.data_transformation_config = DataTransformationConfig()
@@ -36,7 +43,7 @@ class TrainingPipeline:
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e
 
-    def start_data_ingestion(self):
+    def start_data_ingestion(self) -> DataIngestionArtifact:
         try:
             logger.info("Starting data ingestion component")
             data_ingestion = DataIngestion(
@@ -127,12 +134,18 @@ class TrainingPipeline:
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e
 
-    def run_pipeline(self):
+    def run_pipeline(self) -> ModelEvaluationArtifact:
+        """Run all pipeline stages and return the evaluation artifact."""
         try:
             data_ingestion_artifact = self.start_data_ingestion()
             data_validation_artifact = self.start_data_validation(
                 data_ingestion_artifact=data_ingestion_artifact
             )
+            if not data_validation_artifact.status:
+                raise ValueError(
+                    "Data validation failed; transformation and training are blocked. "
+                    f"See {data_validation_artifact.report_file_path}"
+                )
             data_transformation_artifact = self.start_data_transformation(
                 data_ingestion_artifact=data_ingestion_artifact,
                 data_validation_artifact=data_validation_artifact,
@@ -156,5 +169,15 @@ class TrainingPipeline:
                 logger.info(
                     "Pipeline completed - candidate passed evaluation gates; promotion was not performed by this evaluator."
                 )
+            logger.info(
+                "End-to-end training pipeline completed: decision=%s report=%s",
+                model_evaluation_artifact.decision,
+                model_evaluation_artifact.evaluation_report_file_path,
+            )
+            return model_evaluation_artifact
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e
+
+
+if __name__ == "__main__":
+    TrainingPipeline().run_pipeline()
