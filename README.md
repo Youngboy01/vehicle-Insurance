@@ -1,8 +1,8 @@
 # 🚗 Vehicle Insurance Cross-Sell Prediction — MLOps Pipeline
 
-An end-to-end machine learning system that predicts whether a health insurance customer will respond positively to a **vehicle insurance cross-sell** offer. The project goes beyond a notebook model: it is a modular pipeline with schema validation, experiment tracking, a champion/challenger promotion workflow, and a served REST API — all containerized with Docker.
+An end-to-end machine learning system that predicts whether a health insurance customer will respond positively to a **vehicle insurance cross-sell** offer. The project goes beyond a notebook model: it is a modular pipeline with schema validation, experiment tracking, explicit model lineage, and a served REST API — all containerized with Docker.
 
-> **Status:** Core pipeline, model registry workflow, and API are fully functional. CI/CD and cloud deployment are in progress (see [Roadmap](#-roadmap)).
+> **Status:** MongoDB ingestion, contract validation, transformation, notebook-aligned training, MLflow lineage, and benchmark verification are complete. Evaluation/promotion orchestration and production deployment remain in progress (see [Roadmap](#-roadmap)).
 
 ---
 
@@ -29,14 +29,14 @@ An end-to-end machine learning system that predicts whether a health insurance c
 
 ## 🔎 Overview
 
-The dataset used is the classic **health-to-vehicle-insurance cross-sell** dataset: given a customer's demographics, vehicle history, and policy details, predict whether they will respond positively to a vehicle-insurance offer (`Response` = 0/1). The target is highly imbalanced, which shapes several design decisions below, including class-weighted LightGBM and recall-oriented baseline evaluation.
+The dataset used is the classic **health-to-vehicle-insurance cross-sell** dataset: given a customer's demographics, vehicle history, and policy details, predict whether they will respond positively to a vehicle-insurance offer (`Response` = 0/1). The target is highly imbalanced, which shapes the use of class-weighted LightGBM and validation-based top-K evaluation.
 
 Rather than training a model once and calling it done, this project implements the pieces you'd expect in a real ML system:
 
 - **Schema-validated data ingestion** from MongoDB
 - **A reusable, versioned preprocessing pipeline** (fit once, applied consistently at train and inference time)
-- **Experiment tracking and a model registry** with a champion/challenger promotion rule
-- **A served model** behind a REST API that can retrain and hot-swap itself
+- **Experiment tracking and model lineage** with promotion disabled until the evaluation policy is implemented
+- **A served model** behind a REST API, with retraining and hot-swap controls still subject to evaluation/promotion alignment
 - **A containerized runtime** for reproducible deployment
 
 ---
@@ -83,19 +83,19 @@ The model card is a living document and must be updated whenever the model, data
    ┌─────────────────────────────────────────────────────┐
    │                  TRAINING PIPELINE                   │
    │                                                       │
-   │  1. Data Ingestion   → export + train/test split      │
+   │  1. Data Ingestion   → export + stratified 80/10/10 split │
    │  2. Data Validation  → Pandera schema checks           │
-   │  3. Data Transform.  → scale/encode, save preprocessor │
-   │  4. Model Training   → LightGBM + MLflow logging        │
-   │  5. Model Evaluation → champion vs. challenger recall    │
+   │  3. Data Transform.  → fit on train, transform all splits │
+   │  4. Model Training   → frozen LightGBM + MLflow lineage    │
+   │  5. Model Evaluation → validation policy (in progress)    │
    └───────────────────────────┬───────────────────────────┘
                                 │
                                 ▼
                     ┌───────────────────────┐
-                    │   MLflow Model Registry │  (tracked on DagsHub)
-                    │   Champion / Challenger  │
+                    │   MLflow Tracking       │  (tracked on DagsHub)
+                    │   Candidate lineage     │
                     └────────────┬─────────────┘
-                                 │ loads champion model + preprocessor
+                                 │ registry serving integration pending
                                  ▼
                     ┌───────────────────────┐
                     │      FastAPI Service    │
@@ -118,7 +118,7 @@ The model card is a living document and must be updated whenever the model, data
 | Language / packaging    | Python 3.13, `uv`, `setuptools` |
 | Data storage             | MongoDB Atlas |
 | Data validation          | Pandera |
-| Data processing          | pandas, NumPy, scikit-learn (`ColumnTransformer`, `StandardScaler`, `RobustScaler`, `OneHotEncoder`) |
+| Data processing          | pandas, NumPy, scikit-learn (`ColumnTransformer`, `Pipeline`, `OneHotEncoder`) |
 | Model                    | LightGBM (`LGBMClassifier`) |
 | Experiment tracking / registry | MLflow (hosted on DagsHub) |
 | API                       | FastAPI, Uvicorn, Pydantic |
@@ -137,19 +137,21 @@ vehicle-Insurance/
 ├── Dockerfile                      # Multi-stage build (uv → slim runtime)
 ├── pyproject.toml / uv.lock        # Dependency management
 ├── configs/
-│   └── schema.yaml                 # Feature groups used by the transformer
+│   ├── schema.yaml                 # Data contract and preprocessing rules
+│   └── model_spec.yaml             # Frozen model, split, metric, and lineage policy
 ├── notebooks/
 │   ├── notebook.ipynb              # Exploration
-│   └── experimentation.ipynb       # Model experimentation / MLflow runs
+│   ├── experimentation.ipynb       # Earlier model experimentation
+│   └── experimentation_v2.ipynb    # Frozen benchmark/model-reference workflow
 ├── static/style.css                # Dashboard styling
 ├── templates/index.html            # Dashboard UI
 └── src/vehicle_insurance/
     ├── components/
-    │   ├── dataIngestion.py        # MongoDB → feature store → train/test split
+    │   ├── dataIngestion.py        # MongoDB → feature store → train/validation/test split
     │   ├── dataValidation.py       # Pandera schema validation
     │   ├── dataTransformation.py   # ColumnTransformer pipeline
     │   ├── modelTrainer.py         # LightGBM training + MLflow logging
-    │   └── modelEvaluation.py      # Champion/challenger comparison
+    │   └── modelEvaluation.py      # Evaluation policy and promotion integration (in progress)
     ├── configurations/
     │   └── mongodb_connection.py   # MongoDB client (singleton)
     ├── data_access/
@@ -158,7 +160,7 @@ vehicle-Insurance/
     │   ├── config_entity.py        # Per-stage config dataclasses
     │   └── artifact_entity.py      # Per-stage output dataclasses
     ├── pipeline/
-    │   └── training_pipeline.py    # Orchestrates all 5 stages
+    │   └── training_pipeline.py    # Orchestrates stages; evaluation integration pending
     ├── constants/__init__.py       # Central constants
     ├── exceptions/handle_exception.py
     ├── logger/logger_config.py
@@ -169,32 +171,27 @@ vehicle-Insurance/
 
 ## ⚙️ Pipeline Stages
 
-The training pipeline (`TrainingPipeline.run_pipeline()`) runs five stages in sequence, each producing a typed **artifact** consumed by the next stage:
+The intended training pipeline runs five stages in sequence, each producing a typed **artifact** consumed by the next stage. The first four stages and the trainer are benchmark-verified; the evaluation stage still requires alignment with the frozen acceptance policy.
 
 ### 1. Data Ingestion
-Pulls the raw collection from MongoDB into a "feature store" CSV, then splits it into train/test sets (`DATA_INGESTION_TRAIN_TEST_SPLIT_RATIO = 0.25`).
+Pulls the raw `INSURANCE_DATA` collection from MongoDB Atlas into a timestamped feature-store CSV. The extracted DataFrame is sorted locally by ascending `id` and split using the frozen stratified 80/10/10 protocol with `random_state=42`. The resulting `train.csv`, `validation.csv`, and `test.csv` files are disjoint and cover the source IDs exactly once.
 
 ### 2. Data Validation
-Validates both train and test sets against a **Pandera `DataFrameSchema`** — checking dtypes, allowed categories (`Gender`, `Vehicle_Age`, `Vehicle_Damage`), and numeric ranges. Uses `lazy=True` to collect *all* schema violations at once rather than failing on the first one, and writes a JSON validation report. If validation fails, the pipeline halts before wasting compute on transformation/training.
+Validates the training, validation, and test files against the versioned data contract using Pandera-backed checks. It checks required columns, target rules, dtypes, allowed categories, numeric constraints, null/NaN behavior, forbidden fields, and ID integrity, then writes a JSON validation report. If validation fails, the pipeline halts before transformation or training.
 
 ### 3. Data Transformation
-Builds a `ColumnTransformer` (wrapped in a `Pipeline`) driven by `configs/schema.yaml`:
-- `StandardScaler` on standard numeric features (`Age`, `Vintage`)
-- `RobustScaler` on outlier-prone features (`Annual_Premium`)
-- `OneHotEncoder` (drop-first, unknown-safe) on categoricals (`Gender`, `Vehicle_Age`, `Vehicle_Damage`)
+Builds a `ColumnTransformer` driven by `configs/schema.yaml`:
+- one-hot encoding with `handle_unknown="ignore"` for `Gender`, `Vehicle_Age`, `Vehicle_Damage`, `Region_Code`, and `Policy_Sales_Channel`;
+- passthrough for `Age`, `Annual_Premium`, `Vintage`, `Driving_License`, and `Previously_Insured`;
+- no numeric scaling.
 
-The transformer is **fit once on train data only**, applied to both train/test, and persisted as `preprocessor.pkl` so training and inference always use identical logic.
+The transformer is fit on training data only, applied to validation and test data without refitting, and persisted as `preprocessor.pkl`. The verified benchmark produces `219` train-only transformed features; the final train-plus-validation refit produces `220` features because a valid category is observed during final fitting.
 
 ### 4. Model Training
-Loads best hyperparameters from a prior experimentation run, trains a `LGBMClassifier` with `is_unbalance=True` to counter class imbalance, computes accuracy/precision/recall/F1/ROC-AUC, and **rejects the model if test recall falls below a configured threshold** (`MODEL_TRAINER_EXPECTED_SCORE = 0.75`). All params/metrics/artifacts are logged to MLflow, and the model is registered under a `Challenger` alias.
+Loads the frozen LightGBM parameters and `scale_pos_weight` from `configs/model_spec.yaml`. The trainer first fits a train-only candidate for validation and repeated stability analysis, then clones and refits the preprocessing/model pipeline on train plus validation. The untouched test split is evaluated once through that final pipeline. Metrics, feature order, model URI, data hash, Git/dependency versions, and MLflow lineage are persisted locally and logged to MLflow.
 
 ### 5. Model Evaluation
-Compares the new `Challenger` model's recall against the current `Champion` in the MLflow Model Registry:
-- No champion exists yet → challenger is promoted by default.
-- Challenger beats champion by more than `MODEL_EVALUATION_CHANGED_THRESHOLD_SCORE` → challenger is promoted to `Champion`.
-- Otherwise → champion is retained and the challenger is discarded.
-
-This is the same **champion/challenger** pattern used in real-world ML platforms to guard against silently shipping a worse model.
+The evaluation component is not yet aligned with the current trainer and model specification. The replacement must compare candidate validation metrics using primary top-K measures (`precision_at_10pct` and `lift_at_10pct`), supporting metrics, repeated-CV stability, lineage/source-frozen parity, and required segment checks. Final-test metrics are reporting-only. Registry alias mutation remains disabled until explicit acceptance thresholds and promotion controls are approved.
 
 ---
 
@@ -205,10 +202,10 @@ Base URL: `http://localhost:8080`
 | Method | Endpoint    | Description |
 |--------|-------------|-------------|
 | `GET`  | `/`         | Serves the prediction dashboard UI |
-| `GET`  | `/health`   | Returns current champion model version, offline test recall, and load time |
+| `GET`  | `/health`   | Returns service health, loaded model metadata, and load time |
 | `POST` | `/predict`  | Runs inference on a single customer record |
 | `POST` | `/train`    | Kicks off the training pipeline as a background task (locked — rejects if training is already running) |
-| `POST` | `/reload`   | Hot-swaps the in-memory model with the latest MLflow champion, no restart required (requires `X-Reload-Token` header) |
+| `POST` | `/reload`   | Hot-swaps the in-memory model with the latest registered MLflow champion, no restart required (requires `X-Reload-Token` header) |
 
 **Example `/predict` request:**
 ```json
@@ -230,13 +227,14 @@ Base URL: `http://localhost:8080`
 ```json
 {
   "prediction": 1,
+  "response_propensity_score": 0.8421,
   "probability": 0.8421,
-  "model_version": "3",
+  "model_version": "reference-or-registered-version",
   "api_timestamp": "2026-07-08T10:15:00"
 }
 ```
 
-In the response, `prediction = 1` means that the model classifies the customer as likely to respond positively to the cross-sell offer; `prediction = 0` means that the model classifies the customer as unlikely to respond positively. The `probability` field is the model's estimated response propensity score for the positive class. Until formal calibration is evaluated, it should not be interpreted as a guaranteed or perfectly calibrated probability.
+In the response, `prediction = 1` means that the model classifies the customer as likely to respond positively to the cross-sell offer; `prediction = 0` means that the model classifies the customer as unlikely to respond positively. The canonical semantic field is `response_propensity_score`. The compatibility field `probability` may remain temporarily, but it carries the same uncalibrated response-propensity score and must not be interpreted as a guaranteed probability.
 
 The returned score is intended for marketing prioritization. It is not a claim probability, underwriting score, price recommendation, eligibility decision, or causal estimate of whether contacting the customer will create an incremental response.
 
@@ -248,7 +246,7 @@ Interactive Swagger docs are available at `/docs` once the server is running.
 
 ### Prerequisites
 - Python 3.10–3.13
-- [`uv`](https://github.com/astral-sh/uv) (recommended) or pip
+- [`uv`](https://github.com/astral-sh/uv)
 - A MongoDB Atlas cluster (or local MongoDB instance) with your data loaded
 - An MLflow tracking server (this project was tracked via [DagsHub](https://dagshub.com/))
 
@@ -257,11 +255,8 @@ Interactive Swagger docs are available at `/docs` once the server is running.
 git clone https://github.com/Youngboy01/vehicle-Insurance.git
 cd vehicle-Insurance
 
-# using uv (recommended — reads pyproject.toml / uv.lock)
+# using uv (reads pyproject.toml / uv.lock)
 uv sync
-
-# or using pip
-pip install -e .
 ```
 
 ---
@@ -282,11 +277,12 @@ RELOAD_TOKEN=<any secret string — protects the /reload endpoint>
 
 ## 🏃 Running the Training Pipeline
 
-```bash
-python -c "from vehicle_insurance.pipeline.training_pipeline import TrainingPipeline; TrainingPipeline().run_pipeline()"
+```cmd
+cd /d D:\projVehicleInsurance\vehicle-Insurance
+uv run python tests\run_real_training.py
 ```
 
-This runs all five stages end-to-end and, if the trained model passes the recall threshold and beats the current champion, promotes it in the MLflow Model Registry. Artifacts (raw data, splits, transformed arrays, preprocessor, trained model, reports) are saved under a timestamped `artifact/` directory. The current pipeline trains and evaluates the response-propensity model; top-K batch selection and selection-quality evaluation are separate Phase 1 capabilities to be added later. Budget-based selection is deferred beyond the current implementation.
+The private benchmark runner (currently kept under `tests\run_real_training.py`) executes ingestion, validation, transformation, and model training. It is the verified path for reproducing the current benchmark while evaluation/promotion orchestration is being aligned; this helper is intentionally ignored and is not a public production entry point. Artifacts (raw data, splits, transformed arrays, preprocessor, trained model, metrics, and lineage) are saved under a timestamped `artifact/` directory. Run from the repository root so relative paths resolve under the D: repository. Do not run the full orchestrator for release decisions until the evaluation component is updated.
 
 ---
 
@@ -300,7 +296,7 @@ Then visit:
 - `http://localhost:8080` — dashboard UI
 - `http://localhost:8080/docs` — Swagger UI
 
-> Note: the API loads the current **champion** model from MLflow at startup, so a model must already be registered before the API can serve predictions (i.e., run the training pipeline at least once first).
+> Note: the API loads the current registered **champion** model from MLflow at startup, so a model must already be registered before the API can serve predictions. The current trainer candidate is not registered while promotion is disabled.
 
 ---
 
@@ -317,25 +313,7 @@ docker run -p 8080:8080 --env-file .env vehicle-insurance
 
 ## 🏆 Model Registry Workflow
 
-```
- New model trained
-        │
-        ▼
- Registered as "Challenger" in MLflow
-        │
-        ▼
- Compare test recall vs. current "Champion"
-        │
-   ┌────┴─────┐
-   │           │
- Better     Not better
-   │           │
-   ▼           ▼
-Promote to   Champion
- Champion    retained
-```
-
-This means retraining (via the `/train` endpoint or a scheduled job) is **safe to run repeatedly** — the system will only ever update the served model if the new one is measurably better, and the change can be picked up live via `/reload` without redeploying the service.
+The current trainer logs a new candidate model and complete lineage to MLflow. The evaluation/promotion component is being replaced and must use validation top-K metrics, stability, source-frozen parity, and explicit acceptance thresholds. Promotion is currently disabled in `configs/model_spec.yaml`; no claim should be made that retraining automatically updates the served champion.
 
 ---
 
@@ -347,7 +325,7 @@ Configured in `configs/schema.yaml` and enforced by Pandera in the validation st
 |---|---|---|
 | `id` | int | dropped before training |
 | `Gender` | str | `Male` / `Female` |
-| `Age` | int | > 0 |
+| `Age` | int | 18–100 general safety range |
 | `Driving_License` | int | 0 / 1 |
 | `Region_Code` | float | ≥ 0 |
 | `Previously_Insured` | int | 0 / 1 |

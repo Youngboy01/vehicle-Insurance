@@ -6,14 +6,15 @@
 |---|---|
 | Model name | `Vehicle_Insurance_LGBM` |
 | Model type | LightGBM binary classifier |
-| Current reviewed champion | MLflow model version 7 at the time of review |
+| Historical final reference | MLflow run `dc28826afdcc4e5cbce068db62439094` |
+| Latest trainer candidate | MLflow run `41960b9ee2024a1fba0bfed06d1e8b88`; model `m-61b436de1fd5450c88f805c7b29df262` |
 | Task | Binary response-propensity classification |
 | Positive class | `Response = 1` |
 | Decision unit | One customer-campaign opportunity |
 | Intended user | Marketing or campaign-operations team |
 | Serving interface | FastAPI `/predict` endpoint |
-| Review status | Phase 1 research/portfolio system; not production-approved for autonomous decisions |
-| Last reviewed | 2026-08-20 |
+| Review status | Phase 1 benchmark candidate; not production-approved and not promoted |
+| Last reviewed | 2026-08-30 |
 
 This model estimates whether a customer is likely to respond positively to a vehicle-insurance cross-sell offer. It is a marketing-prioritization model, not a claims, pricing, underwriting, fraud, or eligibility model.
 
@@ -64,11 +65,12 @@ The model output is currently exposed as:
 
 - `prediction = 1`: the classifier predicts a positive response at its current decision rule;
 - `prediction = 0`: the classifier predicts no positive response at its current decision rule;
-- `probability`: an estimated positive-class response propensity score;
-- `model_version`: the MLflow champion version used for inference;
+- `response_propensity_score`: the canonical estimated positive-class response propensity score;
+- `probability`: a temporary compatibility field carrying the same uncalibrated score;
+- `model_version`: the model or registered version used for inference;
 - `api_timestamp`: the time at which the API produced the response.
 
-The `probability` field should not be interpreted as a guaranteed or perfectly calibrated probability until calibration has been evaluated and documented.
+Neither score field should be interpreted as a guaranteed or perfectly calibrated probability until calibration has been evaluated and documented.
 
 ## 5. Prediction timing and decision unit
 
@@ -82,7 +84,7 @@ The target response is observed after the offer. It must never be used as an inp
 
 ### Data source
 
-The current benchmark data is stored in `notebooks/data.csv` and is loaded into MongoDB for pipeline ingestion. The original dataset source, license, acquisition date, and content hash still need to be formally recorded as part of the data-provenance tasks.
+The active benchmark source is the `data.csv` content loaded into MongoDB Atlas database `INSURANCE`, collection `INSURANCE_DATA`. `notebooks/data.csv` is a repository reference copy and is not authoritative for the MongoDB contents. The trainer records a deterministic SHA-256 content hash for each run; the latest corrected run recorded `3b60d1072851756367817fb155e6e755ffa79509daa806720719bc395dfbea7d`. The original dataset license and acquisition history still require formal provenance documentation.
 
 The benchmark should not be presented as proof of production performance. It is a historical/static dataset used to demonstrate the modeling and MLOps workflow.
 
@@ -115,53 +117,49 @@ The benchmark should not be presented as proof of production performance. It is 
 
 ## 7. Training and preprocessing
 
-The current pipeline contains these stages:
+The verified benchmark training path contains these stages:
 
-1. Ingest the MongoDB collection into a timestamped feature-store CSV.
-2. Split the data into train and test sets.
-3. Validate both sets with a Pandera schema.
+1. Ingest the MongoDB collection into a timestamped feature-store CSV and sort the materialized data by ascending `id`.
+2. Create a stratified 80/10/10 train/validation/test split with `random_state=42`.
+3. Validate all three labeled splits against the versioned data contract.
 4. Fit preprocessing on training data only.
-5. Apply the fitted preprocessing to training and test data.
-6. Train a LightGBM classifier with imbalance handling.
-7. Log metrics and artifacts to MLflow.
-8. Register the model as a challenger.
-9. Compare challenger recall against the current champion.
+5. Apply the fitted preprocessing to validation and test data without refitting.
+6. Fit a train-only LightGBM candidate using the frozen model specification.
+7. Run repeated stratified stability evaluation with fold-local preprocessing.
+8. Refit the final preprocessing-plus-model pipeline on train plus validation.
+9. Evaluate the untouched test split once through the final pipeline.
+10. Persist and log metrics, artifacts, feature order, versions, hashes, and MLflow lineage.
+11. Evaluate release readiness using the validation-based policy; registry promotion is currently disabled.
 
-The current preprocessing uses:
+The frozen preprocessing uses:
 
-- `StandardScaler` for `Age` and `Vintage`;
-- `RobustScaler` for `Annual_Premium`;
-- one-hot encoding for `Gender`, `Vehicle_Age`, and `Vehicle_Damage`;
-- passthrough behavior for the remaining configured features.
+- one-hot encoding with `handle_unknown="ignore"` for `Gender`, `Vehicle_Age`, `Vehicle_Damage`, `Region_Code`, and `Policy_Sales_Channel`;
+- passthrough behavior for `Age`, `Annual_Premium`, `Vintage`, `Driving_License`, and `Previously_Insured`;
+- no numeric scaling.
 
-The current training model uses `LGBMClassifier` with `is_unbalance=True` and hyperparameters loaded from a previous experimentation artifact. Removing this hidden notebook-generated dependency is a required reproducibility improvement.
+The frozen training model uses `LGBMClassifier` with `scale_pos_weight=7.159039820166988` and hyperparameters loaded from `configs/model_spec.yaml`. The candidate transformation width is `219`; the final train-plus-validation pipeline width is `220`. The saved model is a self-contained preprocessing-plus-LightGBM pipeline.
 
 ## 8. Evaluation evidence
 
-The latest stored pipeline run reviewed was `artifact/04_13_2026_01_44_02`.
+The latest corrected benchmark run completed on `2026-08-30` using `381109` MongoDB records and the frozen stratified 80/10/10 protocol. The final model was refit on train plus validation, and the untouched test split was evaluated exactly once.
 
-| Metric | Test | Train |
+| Metric | Validation candidate | Final test report |
 |---|---:|---:|
-| Accuracy | 0.7174 | 0.7334 |
-| Precision | 0.2894 | 0.3094 |
-| Recall | 0.8991 | 0.9534 |
-| F1 score | 0.4379 | 0.4672 |
-| ROC-AUC | 0.8539 | 0.8894 |
+| PR-AUC | 0.370007 | 0.373937 |
+| ROC-AUC | 0.857251 | 0.859726 |
+| Precision@10% | 0.396484 | 0.396221 |
+| Recall@10% | 0.323485 | 0.323271 |
+| Lift@10% | 3.234938 | 3.232797 |
 
-These metrics describe the current stored run, not a final production guarantee.
+The historical notebook final-test reference is exactly `0.373937` PR-AUC, `0.859726` ROC-AUC, `0.396221` Precision@10%, `0.323271` Recall@10%, and `3.232797` Lift@10%. The corrected trainer reproduced all five values exactly. This is benchmark reproducibility evidence, not a production performance guarantee.
+
+Repeated stability evaluation used 3 folds and 3 repeats on the training split with preprocessing refit inside each fold. The resulting means were PR-AUC `0.369748`, Precision@10% `0.397374`, Recall@10% `0.324190`, and Lift@10% `3.242187`.
 
 ### Evaluation limitations
 
-The notebook and pipeline currently use different split protocols:
+The corrected trainer now matches the frozen notebook split semantics and final-fit workflow. The final test set is evaluated once after candidate and operating-point decisions. The production acceptance evaluator is still being aligned: it must use validation top-K metrics, stability, source-frozen parity, and segment checks rather than test recall.
 
-- notebook: 20% stratified test split;
-- pipeline: 25% split without stratification.
-
-The notebook evaluates candidates on the same test set before choosing the final candidate. That means the test set has influenced model selection and is not a completely untouched final estimate.
-
-The notebook also applies SMOTE to the full training portion before cross-validation. A leakage-safe experiment should apply resampling within each training fold.
-
-The current model is compared mainly using recall, precision, F1, accuracy, and ROC-AUC. PR-AUC, lift, gains, precision@K, recall@K, calibration, threshold economics, confidence intervals, and segment-level metrics are not yet part of the complete acceptance gate.
+The current model specification names the required metric families but does not yet define numeric practical-improvement or non-inferiority tolerances for future challenger promotion. Therefore, the latest candidate remains unpromoted.
 
 ## 9. Operating point and campaign decisions
 
@@ -203,11 +201,11 @@ Important limitations include:
 2. The current dataset does not establish a campaign treatment/control design.
 3. The model estimates association with historical response and does not establish causation.
 4. The probability output has not been formally calibrated.
-5. The current evaluation process uses inconsistent split designs and has test-set selection concerns.
+5. The validation-based acceptance and promotion evaluator is not yet aligned with the frozen metric policy.
 6. `Region_Code` and `Policy_Sales_Channel` may be categorical codes rather than continuous measurements.
 7. Data drift, novel categories, changed campaign behavior, and changed customer populations may reduce performance.
 8. The API currently scores one record at a time and does not yet implement complete campaign-budget selection.
-9. The current training process depends on an ignored local experiment pickle.
+9. The current candidate is logged to MLflow but is not yet registered or promoted as a production Champion.
 10. Offline model metrics do not prove incremental business value.
 
 If input data is incomplete, invalid, out of distribution, or from a materially different population, the system should fail safely or route the case for review rather than silently presenting a confident score.
@@ -244,19 +242,19 @@ The model card should be updated before a model is promoted to a materially diff
 
 ### Required before claiming a credible model
 
-- Freeze train/validation/final-test evaluation design.
-- Add honest baselines and cross-validation.
-- Select the top-K operating point using validation data and top-K selection-quality metrics.
-- Add PR-AUC, lift, gains, precision@K, recall@K, calibration, and confidence intervals.
-- Validate data provenance, duplicates, split overlap, and target prevalence.
+- Implement the validation-based evaluation and release-readiness gate.
+- Define practical-improvement or non-inferiority tolerances for the primary and supporting metrics.
+- Complete source-frozen split-ID and prediction parity checks where reference artifacts are available.
+- Complete required segment-level performance review.
+- Validate data provenance, snapshot metadata, duplicates, split overlap, and target prevalence.
 
 ### Required before production-oriented deployment
 
-- Remove the ignored experiment-pickle dependency.
-- Make the inference artifact self-contained.
+- Keep the self-contained final pipeline as the serving artifact.
+- Align the orchestrated pipeline with the evaluation result and disabled-promotion policy.
 - Add tests, CI, input constraints, authentication, rate limiting, and readiness checks.
 - Move training into a separate durable job or workflow.
-- Add monitoring, rollback, and model-version lineage.
+- Add monitoring, rollback, and complete model-version lineage.
 
 ### Future probability calibration work
 
@@ -351,4 +349,4 @@ Before production-oriented use:
 - calibrate the output only if the product presents it as a probability rather than as a ranking score;
 - monitor feature drift, score drift, and delayed campaign outcomes after deployment.
 
-The SHAP results do not justify changing the frozen model or rerunning the untouched test evaluation. They document the behavior of the approved model. Future causal improvement requires campaign treatment/control data and potentially an uplift or treatment-effect model.
+The SHAP results do not justify changing the frozen model or rerunning the untouched test evaluation. They document the behavior of the historical frozen reference model. Future causal improvement requires campaign treatment/control data and potentially an uplift or treatment-effect model.
