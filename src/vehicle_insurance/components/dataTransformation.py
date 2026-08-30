@@ -160,7 +160,7 @@ class DataTransformation:
             )
 
             expected_feature_count = self._schema_config["preprocessing"][
-                "transformed_feature_count"
+                "train_only_transformed_feature_count"
             ]
             transformed_feature_names = preprocessor.get_feature_names_out()
             actual_feature_count = len(transformed_feature_names)
