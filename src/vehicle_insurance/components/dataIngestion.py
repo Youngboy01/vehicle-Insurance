@@ -71,7 +71,12 @@ class DataIngestion:
                 stratify=df[TARGET_COLUMN],
             )
 
-            validation_set, test_set = train_test_split(
+            # Match experimentation_v2.ipynb exactly.  sklearn returns the
+            # first partition as the retained portion of remainder_set; the
+            # notebook names that partition X_test and the second partition
+            # X_val.  Keep those semantic names here so downstream artifacts
+            # and metrics use the same customer IDs as the reference run.
+            test_set, validation_set = train_test_split(
                 remainder_set,
                 test_size=test_ratio / (validation_ratio + test_ratio),
                 random_state=random_state,

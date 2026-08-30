@@ -1,12 +1,13 @@
 import os
 import sys
-import pymongo
+
 import certifi
+import pymongo
 from dotenv import load_dotenv
 
+from vehicle_insurance.constants.__init__ import DATABASE_NAME, MONGODB_URL_KEY
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
-from vehicle_insurance.constants.__init__ import DATABASE_NAME, MONGODB_URL_KEY
 
 load_dotenv()
 
@@ -29,7 +30,15 @@ class MongoDBConnection:
 
                 # establish connection to mongodb
                 MongoDBConnection.client = pymongo.MongoClient(
-                    mongodb_url, tlsCAFile=certi
+                    mongodb_url,
+                    tlsCAFile=certi,
+                    connectTimeoutMS=30_000,
+                    serverSelectionTimeoutMS=30_000,
+                    socketTimeoutMS=180_000,
+                    # A full benchmark extraction can exceed a short
+                    # client-side operation deadline. Each socket response
+                    # remains bounded by socketTimeoutMS.
+                    timeoutMS=None,
                 )
 
             self.client = MongoDBConnection.client
