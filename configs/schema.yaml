@@ -131,7 +131,8 @@ preprocessing:
   handle_unknown: ignore
   numeric_scaling: none
   remainder: drop
-  transformed_feature_count: 220
+  train_only_transformed_feature_count: 219
+  final_transformed_feature_count: 220
   transformed_feature_order_source: fitted_pipeline
   model_input_order_source: fitted_pipeline
   manual_transformed_feature_order_reconstruction: forbidden

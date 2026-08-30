@@ -11,6 +11,7 @@ TRAIN_FILE_NAME: str = "train.csv"
 VALIDATION_FILE_NAME: str = "validation.csv"
 TEST_FILE_NAME: str = "test.csv"
 SCHEMA_FILE_PATH: str = os.path.join("configs", "schema.yaml")
+MODEL_SPEC_FILE_PATH: str = os.path.join("configs", "model_spec.yaml")
 
 # data ingestion related constants
 DATA_INGESTION_COLLECTION_NAME: str = "INSURANCE_DATA"
@@ -37,10 +38,6 @@ TARGET_COLUMN: str = "Response"
 MODEL_TRAINER_DIR_NAME: str = "model_trainer"
 MODEL_TRAINER_TRAINED_MODEL_FILE_NAME: str = "model.pkl"
 MODEL_TRAINER_METRICS_FILE_NAME: str = "metrics.json"
-MODEL_TRAINER_EXPERIMENT_PKL_PATH: str = os.path.join(
-    "artifacts", "models", "best_model_Round3_ClassWeight_LightGBM_is_unbalance.pkl"
-)
-MODEL_TRAINER_EXPECTED_SCORE: float = 0.75
 
 # mlflow related constants
 MLFLOW_TRACKING_URI_KEY: str = "MLFLOW_TRACKING_URI"

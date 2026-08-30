@@ -82,8 +82,6 @@ class ModelTrainerConfig:
     metrics_file_path: str = os.path.join(
         model_trainer_dir, MODEL_TRAINER_METRICS_FILE_NAME
     )
-    experiment_pkl_path: str = MODEL_TRAINER_EXPERIMENT_PKL_PATH
-    expected_score: float = MODEL_TRAINER_EXPECTED_SCORE
 
 
 @dataclass

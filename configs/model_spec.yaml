@@ -64,7 +64,8 @@ features:
     one_hot_drop: null
     handle_unknown: ignore
     remainder: drop
-    transformed_feature_count: 220
+    train_only_transformed_feature_count: 219
+    final_transformed_feature_count: 220
 
 selection:
   score_name: response_propensity_score
@@ -135,10 +136,10 @@ evaluation_policy:
 
 artifacts:
   mlflow_tracking:
-    run_id: dc28826afdcc4e5cbce068db62439094
-    logged_model_id: m-3aacf46fc018452ab9aab96033eb7e56
-    model_uri: models:/m-3aacf46fc018452ab9aab96033eb7e56
-    source_run_id: dc28826afdcc4e5cbce068db62439094
+    source_tuning_run_id: e573ee5423434e6485404a96ca5f5731
+    reference_final_run_id: dc28826afdcc4e5cbce068db62439094
+    reference_final_model_id: m-3aacf46fc018452ab9aab96033eb7e56
+    reference_final_model_uri: models:/m-3aacf46fc018452ab9aab96033eb7e56
 
 future_work:
   - probability_calibration_study

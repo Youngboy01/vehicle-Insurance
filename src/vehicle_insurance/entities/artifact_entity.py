@@ -29,8 +29,14 @@ class ModelTrainerArtifact:
     trained_model_file_path: str
     metrics_file_path: str
     train_metrics: dict
+    validation_metrics: dict
     test_metrics: dict
     run_id: str
+    model_id: str
+    model_uri: str
+    registered_model_name: Optional[str]
+    registered_model_version: Optional[str]
+    stability_metrics: dict
 
 
 @dataclass
