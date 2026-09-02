@@ -16,29 +16,37 @@ exists, reconstructs the typed trainer artifact, and delegates the decision to
 
 ## Command Prompt usage
 
-Run from the repository root with the project's `uv` environment:
+Run from the repository root with the project's `uv` environment. Use the
+candidate directory created by the fresh training run:
 
 ```cmd
-cd /d D:\projVehicleInsurance\vehicle-Insurance
-uv run python -m vehicle_insurance.verification.replay_model_evaluation --candidate-artifact-dir artifact\08_31_2026_01_05_59
+set "CANDIDATE_ARTIFACT_DIR=artifact\YOUR_RUN_DIRECTORY"
+uv run python -m vehicle_insurance.verification.replay_model_evaluation --candidate-artifact-dir "%CANDIDATE_ARTIFACT_DIR%"
 ```
+
+Replace `YOUR_RUN_DIRECTORY` with the actual directory created under
+`artifact\` by training. Do not copy a private historical artifact path from
+another machine or run.
 
 The default output is:
 
 ```text
-artifact\08_31_2026_01_05_59\model_evaluation\replay_report.json
+%CANDIDATE_ARTIFACT_DIR%\model_evaluation\replay_report.json
 ```
 
 The existing `model_evaluation\report.json` is not overwritten. To choose a
 different report path:
 
 ```cmd
-uv run python -m vehicle_insurance.verification.replay_model_evaluation --candidate-artifact-dir artifact\08_31_2026_01_05_59 --report-file-path artifact\08_31_2026_01_05_59\model_evaluation\replay_report_2026-09-02.json
+uv run python -m vehicle_insurance.verification.replay_model_evaluation --candidate-artifact-dir "%CANDIDATE_ARTIFACT_DIR%" --report-file-path "%CANDIDATE_ARTIFACT_DIR%\model_evaluation\replay_report_YYYY-MM-DD.json"
 ```
 
 The command loads `.env` without overriding variables already supplied by the
-execution environment. MLflow credentials are needed only for the evaluator's
-read-only Champion lookup.
+execution environment. Under the current
+`evaluation_policy.champion_challenger_workflow.enabled: false` setting, replay
+does not query Champion and does not require MLflow credentials for a comparison.
+Credentials become relevant only if the future Champion/Challenger workflow is
+explicitly enabled.
 
 ## Decision and exit codes
 
@@ -71,19 +79,22 @@ The evaluator then applies the locked policy in the normal order:
 3. contract, model-spec, dataset, dependency, feature-order, and fit-scope
    lineage;
 4. source-frozen split/prediction parity evidence;
-5. read-only comparison with a valid Champion when one exists; and
+5. Champion comparison is skipped under the current candidate-only policy and
+   remains reserved for the future workflow; and
 6. final-test metrics copied for reporting only.
 
 The current `promotion.enabled: false` setting remains authoritative. A passing
 replay therefore reports `eligible_but_promotion_disabled` and performs no
-registration or alias change. If the registered Champion alias points to a
-legacy run without the required validation evidence, the evaluator fails closed
-with an explicit reason code rather than silently treating that run as a valid
-comparison baseline.
+registration or alias change. If the future comparison workflow is enabled and
+the registered Champion alias points to a legacy run without the required
+validation evidence, the evaluator fails closed with an explicit reason code
+rather than silently treating that run as a valid comparison baseline.
 
 ## When to run replay
 
 Run replay after applying reviewed lineage/parity evidence to an existing
 candidate, after changing evaluator code, or after changing the versioned
-evaluation policy. Do not use it as a substitute for a fresh training run when
-the data, preprocessing, model, split protocol, or model specification changes.
+evaluation policy. Fresh training already runs source-frozen parity as a formal
+stage before final evaluation. Do not use replay as a substitute for a fresh
+training run when the data, preprocessing, model, split protocol, or model
+specification changes.

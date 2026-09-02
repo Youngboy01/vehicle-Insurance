@@ -1,16 +1,16 @@
-"""One-time verification of the production pipeline against the frozen notebook.
+"""Source-frozen verification against the frozen notebook.
 
-The verifier is intentionally separate from the recurring training pipeline. It
-certifies one candidate artifact against the historical notebook final run for
-the same source snapshot, split protocol, preprocessing contract, and model
-recipe. A successful run produces a durable JSON report under the candidate
-artifact directory. Local/MLflow lineage mutation is opt-in via
-``--apply-lineage`` and ``--log-mlflow-evidence``.
+The standalone verifier certifies one candidate artifact against the historical
+notebook final run for the same source snapshot, split protocol, preprocessing
+contract, and model recipe. The training pipeline also invokes this verifier as
+a formal stage before final evaluation. A successful run produces a durable
+JSON report under the candidate artifact directory. Local/MLflow lineage
+mutation is opt-in via ``--apply-lineage`` and ``--log-mlflow-evidence``.
 
 Run from the repository root, for example::
 
     uv run python -m vehicle_insurance.verification.source_frozen_parity ^
-        --candidate-artifact-dir artifact\\08_31_2026_01_05_59
+        --candidate-artifact-dir <candidate-artifact-dir>
 
 The source split IDs are reconstructed with the exact split sequence from
 ``notebooks/experimentation_v2.ipynb`` because the historical notebook run did

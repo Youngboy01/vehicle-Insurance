@@ -119,7 +119,7 @@ The benchmark should not be presented as proof of production performance. It is 
 
 The verified benchmark training path contains these stages:
 
-1. Ingest the MongoDB collection into a timestamped feature-store CSV and sort the materialized data by ascending `id`.
+1. Ingest the MongoDB collection into a unique per-run feature-store CSV and sort the materialized data by ascending `id`.
 2. Create a stratified 80/10/10 train/validation/test split with `random_state=42`.
 3. Validate all three labeled splits against the versioned data contract.
 4. Fit preprocessing on training data only.
@@ -178,7 +178,7 @@ If no valid Champion exists, the evaluator applies the absolute validation and s
 
 The corrected trainer now matches the frozen notebook split semantics and final-fit workflow. The final test set is evaluated once after candidate and operating-point decisions. The production acceptance evaluator is now aligned with validation top-K metrics, stability, source-frozen parity, lineage, and read-only Champion comparison rather than test recall. Existing candidates can be re-evaluated from their recorded trainer artifact after lineage evidence is updated.
 
-The current model specification defines provisional numeric practical-improvement and non-inferiority tolerances. They remain pending owner approval. The latest candidate's source-frozen parity is verified, but it remains unpromoted because promotion is disabled and the current legacy Champion evidence is not valid for the new validation-based comparison policy.
+The current model specification defines provisional numeric practical-improvement and non-inferiority tolerances. They remain pending owner approval. The latest candidate's source-frozen parity is verified, but it remains unpromoted because promotion is disabled. Champion comparison is disabled during the current candidate-only phase; the historical reference is retained only as dormant future-workflow context and is not used as the active model.
 
 ## 9. Operating point and campaign decisions
 

@@ -8,7 +8,7 @@ gates to the canonical ``ModelEvaluation`` component.
 Run from the repository root with the project's ``uv`` environment::
 
     uv run python -m vehicle_insurance.verification.replay_model_evaluation \
-        --candidate-artifact-dir artifact\\08_31_2026_01_05_59
+        --candidate-artifact-dir <candidate-artifact-dir>
 
 Exit codes:
 

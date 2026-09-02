@@ -88,7 +88,8 @@ The model card is a living document and must be updated whenever the model, data
    │  2. Data Validation  → Pandera schema checks           │
    │  3. Data Transform.  → fit on train, transform all splits │
    │  4. Model Training   → frozen LightGBM + MLflow lineage    │
-   │  5. Model Evaluation → validation policy + replay evidence │
+   │  5. Source-frozen parity → split/prediction certification      │
+   │  6. Model Evaluation → validation policy + final decision      │
    └───────────────────────────┬───────────────────────────┘
                                 │
                                 ▼
@@ -175,10 +176,10 @@ vehicle-Insurance/
 
 ## ⚙️ Pipeline Stages
 
-The training pipeline runs five stages in sequence, each producing a typed **artifact** consumed by the next stage. In addition, the evaluation policy can be replayed against an existing candidate artifact after lineage evidence is updated, without retraining.
+The training pipeline runs six stages in sequence, each producing a typed **artifact** consumed by the next stage. In addition, the evaluation policy can be replayed against an existing candidate artifact after lineage evidence is updated, without retraining.
 
 ### 1. Data Ingestion
-Pulls the raw `INSURANCE_DATA` collection from MongoDB Atlas into a timestamped feature-store CSV. The extracted DataFrame is sorted locally by ascending `id` and split using the frozen stratified 80/10/10 protocol with `random_state=42`. The resulting `train.csv`, `validation.csv`, and `test.csv` files are disjoint and cover the source IDs exactly once.
+Pulls the raw `INSURANCE_DATA` collection from MongoDB Atlas into a unique per-run feature-store CSV. The extracted DataFrame is sorted locally by ascending `id` and split using the frozen stratified 80/10/10 protocol with `random_state=42`. The resulting `train.csv`, `validation.csv`, and `test.csv` files are disjoint and cover the source IDs exactly once.
 
 ### 2. Data Validation
 Validates the training, validation, and test files against the versioned data contract using Pandera-backed checks. It checks required columns, target rules, dtypes, allowed categories, numeric constraints, null/NaN behavior, forbidden fields, and ID integrity, then writes a JSON validation report. If validation fails, the pipeline halts before transformation or training.
@@ -194,8 +195,11 @@ The transformer is fit on training data only, applied to validation and test dat
 ### 4. Model Training
 Loads the frozen LightGBM parameters and `scale_pos_weight` from `configs/model_spec.yaml`. The trainer first fits a train-only candidate for validation and repeated stability analysis, then clones and refits the preprocessing/model pipeline on train plus validation. The untouched test split is evaluated once through that final pipeline. Metrics, feature order, model URI, data hash, Git/dependency versions, and MLflow lineage are persisted locally and logged to MLflow.
 
-### 5. Model Evaluation
-The evaluation component compares candidate validation metrics using primary top-K measures (`precision_at_10pct` and `lift_at_10pct`), supporting metrics, repeated-CV stability, lineage/source-frozen parity, and Champion validation evidence when available. Provisional numeric thresholds are versioned in `configs/model_spec.yaml` and remain pending owner approval. Final-test metrics are reporting-only. Registry alias mutation remains disabled while `promotion.enabled` is `false`. See [Existing-candidate evaluation replay](docs/model_evaluation_replay.md) to regenerate evaluation evidence from a completed candidate without retraining.
+### 5. Source-frozen Parity
+Certifies the candidate's split IDs, feature order, transformed values, and predictions against the frozen source evidence. This stage runs automatically before evaluation and records verified evidence in the candidate lineage.
+
+### 6. Model Evaluation
+The evaluation component compares candidate validation metrics using primary top-K measures (`precision_at_10pct` and `lift_at_10pct`), supporting metrics, repeated-CV stability, lineage, and source-frozen parity. Provisional numeric thresholds are versioned in `configs/model_spec.yaml` and remain pending owner approval. Under the current candidate-only policy, Champion comparison is disabled and promotion remains disabled. Final-test metrics are reporting-only. See [Existing-candidate evaluation replay](docs/model_evaluation_replay.md) to regenerate evaluation evidence from a completed candidate without retraining.
 
 ---
 
@@ -282,11 +286,10 @@ RELOAD_TOKEN=<any secret string — protects the /reload endpoint>
 ## 🏃 Running the Training Pipeline
 
 ```cmd
-cd /d D:\projVehicleInsurance\vehicle-Insurance
 uv run python -m vehicle_insurance.pipeline.training_pipeline
 ```
 
-The public module entry point executes ingestion, validation, transformation, model training, and evaluation in sequence. It returns an evaluation artifact and saves raw data, splits, transformed arrays, preprocessor, trained model, metrics, evaluation report, and lineage under a timestamped `artifact/` directory. Run from the repository root so relative paths resolve under the D: repository. Promotion remains disabled until the evaluation policy, source-frozen parity, segment review, and owner approval gates are complete. The private `tests\run_real_training.py` helper remains available for stage-level benchmark runs when evaluation is not required.
+Run this command from the repository root. The public module entry point executes ingestion, validation, transformation, model training, source-frozen parity, and final evaluation in sequence. It saves raw data, splits, transformed arrays, preprocessor, trained model, metrics, parity certificate, evaluation report, and lineage under a unique `artifact\<run-directory>` directory. Promotion remains disabled until the evaluation policy, source-frozen parity, segment review, and owner approval gates are complete. The private `tests\run_real_training.py` helper remains available for stage-level benchmark runs when evaluation is not required.
 
 ### Replaying Existing-candidate Evaluation
 
@@ -294,14 +297,16 @@ When a completed candidate receives corrected or newly certified lineage, replay
 the evaluation without rerunning ingestion, transformation, or training:
 
 ```cmd
-cd /d D:\projVehicleInsurance\vehicle-Insurance
-uv run python -m vehicle_insurance.verification.replay_model_evaluation --candidate-artifact-dir artifact\08_31_2026_01_05_59
+set "CANDIDATE_ARTIFACT_DIR=artifact\YOUR_RUN_DIRECTORY"
+uv run python -m vehicle_insurance.verification.replay_model_evaluation --candidate-artifact-dir "%CANDIDATE_ARTIFACT_DIR%"
 ```
 
-The replay writes `model_evaluation\replay_report.json` inside the candidate
-artifact and preserves the earlier `report.json`. It reads the recorded trainer
-metrics, reruns the validation/stability/lineage/parity/Champion gates, keeps
-test metrics reporting-only, and never mutates MLflow aliases. Exit code `0`
+Replace `YOUR_RUN_DIRECTORY` with the actual run directory created by training.
+The replay writes `%CANDIDATE_ARTIFACT_DIR%\model_evaluation\replay_report.json`
+and preserves the earlier `report.json`. It reads the recorded trainer metrics,
+reruns the validation/stability/lineage/parity gates, skips Champion comparison
+under the current candidate-only policy, keeps test metrics reporting-only, and
+never mutates MLflow aliases. Exit code `0`
 means the candidate passed; exit code `2` means evaluation completed but a
 policy gate rejected the candidate; exit code `1` means replay execution failed.
 
