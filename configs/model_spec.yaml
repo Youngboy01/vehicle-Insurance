@@ -88,6 +88,10 @@ data_protocol:
 
 evaluation_policy:
   purpose: production_candidate_acceptance_and_release_readiness
+  # Active mode is candidate-only. Flip this single flag to true only when
+  # the future Champion/Challenger comparison workflow is intentionally ready.
+  champion_challenger_workflow:
+    enabled: false
   primary_metrics:
     - precision_at_10pct
     - lift_at_10pct
@@ -148,6 +152,8 @@ evaluation_policy:
       lift_at_10pct: 0.20
       recall_at_10pct: 0.025
       pr_auc: 0.025
+    # Future comparison thresholds are retained for later workflow enablement.
+    # They are not consulted while champion_challenger_workflow.enabled=false.
     champion_comparison:
       primary_improvement_required: true
       minimum_primary_improvement:
@@ -172,6 +178,8 @@ evaluation_policy:
 
 artifacts:
   mlflow_tracking:
+    # Historical parity-only references. These are never serving fallbacks,
+    # active candidates, or current Champion/Challenger selections.
     source_tuning_run_id: e573ee5423434e6485404a96ca5f5731
     reference_final_run_id: dc28826afdcc4e5cbce068db62439094
     reference_final_model_id: m-3aacf46fc018452ab9aab96033eb7e56

@@ -61,6 +61,7 @@ class ModelEvaluation:
         model_evaluation_config: ModelEvaluationConfig,
         model_trainer_artifact: ModelTrainerArtifact,
         evaluation_context: dict[str, Any] | None = None,
+        require_champion_comparison: bool | None = None,
     ) -> None:
         try:
             self.model_trainer_artifact = model_trainer_artifact
@@ -73,6 +74,15 @@ class ModelEvaluation:
             self.model_spec = read_yaml_file(MODEL_SPEC_FILE_PATH)
             self.schema_config = read_yaml_file(SCHEMA_FILE_PATH)
             self._validate_policy()
+            configured_comparison = self.model_spec["evaluation_policy"][
+                "champion_challenger_workflow"
+            ]["enabled"]
+            if require_champion_comparison is None:
+                self.require_champion_comparison = configured_comparison
+            else:
+                if not isinstance(require_champion_comparison, bool):
+                    raise TypeError("require_champion_comparison must be boolean")
+                self.require_champion_comparison = require_champion_comparison
         except Exception as error:
             raise VehicleInsuranceException(error, sys) from error
 
@@ -98,6 +108,12 @@ class ModelEvaluation:
         if missing_groups:
             raise ValueError(
                 f"Evaluation policy is missing threshold groups: {missing_groups}"
+            )
+
+        workflow_config = policy.get("champion_challenger_workflow") or {}
+        if not isinstance(workflow_config.get("enabled"), bool):
+            raise ValueError(
+                "evaluation_policy.champion_challenger_workflow.enabled must be boolean"
             )
 
         promotion_enabled = policy.get("promotion", {}).get("enabled")
@@ -636,11 +652,27 @@ class ModelEvaluation:
             stability_gate = self._check_stability_metrics(candidate_stability)
             lineage_gate = self._check_lineage(candidate_lineage)
             parity_gate = self._check_source_frozen_parity(candidate_lineage)
-            champion_info = self._load_champion_info()
-            champion_gate = self._check_champion_comparison(
-                candidate_validation,
-                champion_info,
-            )
+            if self.require_champion_comparison:
+                champion_info = self._load_champion_info()
+                champion_gate = self._check_champion_comparison(
+                    candidate_validation,
+                    champion_info,
+                )
+            else:
+                disabled_reason = "champion_comparison_disabled_by_policy"
+                if self.evaluation_context.get("mode") == "bootstrap":
+                    disabled_reason = "first_champion_bootstrap"
+                champion_info = {
+                    "status": "not_required",
+                    "validation_metrics": None,
+                    "reason_codes": [disabled_reason],
+                }
+                champion_gate = {
+                    "passed": True,
+                    "status": "not_required",
+                    "comparison_performed": False,
+                    "reason_codes": [disabled_reason],
+                }
 
             gate_results = {
                 "candidate_identity": {
@@ -691,6 +723,7 @@ class ModelEvaluation:
                         "acceptance_thresholds"
                     ],
                     "promotion_enabled": promotion_enabled,
+                    "champion_comparison_required": self.require_champion_comparison,
                 },
                 "candidate": {
                     "run_id": candidate.run_id,

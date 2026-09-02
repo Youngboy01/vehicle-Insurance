@@ -1,4 +1,7 @@
+import json
 import sys
+from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -7,6 +10,7 @@ from vehicle_insurance.components.dataTransformation import DataTransformation
 from vehicle_insurance.components.dataValidation import DataValidation
 from vehicle_insurance.components.modelEvaluation import ModelEvaluation
 from vehicle_insurance.components.modelTrainer import ModelTrainer
+from vehicle_insurance.constants import MODEL_SPEC_FILE_PATH
 from vehicle_insurance.entities.artifact_entity import (
     DataIngestionArtifact,
     DataTransformationArtifact,
@@ -20,9 +24,14 @@ from vehicle_insurance.entities.config_entity import (
     DataValidationConfig,
     ModelEvaluationConfig,
     ModelTrainerConfig,
+    TrainingPipelineConfig,
 )
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
+from vehicle_insurance.utils import read_yaml_file
+from vehicle_insurance.verification.source_frozen_parity import (
+    SourceFrozenParityCertification,
+)
 
 logger = setup_logger()
 
@@ -35,11 +44,22 @@ class TrainingPipeline:
             # Load local development configuration without overriding values
             # supplied by the execution environment or deployment platform.
             load_dotenv(override=False)
-            self.data_ingestion_config = DataIngestionConfig()
-            self.data_validation_config = DataValidationConfig()
-            self.data_transformation_config = DataTransformationConfig()
-            self.model_trainer_config = ModelTrainerConfig()
-            self.model_evaluation_config = ModelEvaluationConfig()
+            self.training_pipeline_config = TrainingPipelineConfig()
+            artifact_dir = self.training_pipeline_config.artifact_dir
+            self.data_ingestion_config = DataIngestionConfig(
+                artifact_dir=artifact_dir
+            )
+            self.data_validation_config = DataValidationConfig(
+                artifact_dir=artifact_dir
+            )
+            self.data_transformation_config = DataTransformationConfig(
+                artifact_dir=artifact_dir
+            )
+            self.model_trainer_config = ModelTrainerConfig(artifact_dir=artifact_dir)
+            self.model_evaluation_config = ModelEvaluationConfig(
+                artifact_dir=artifact_dir
+            )
+            self.source_frozen_parity_report: dict[str, Any] | None = None
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e
 
@@ -122,9 +142,21 @@ class TrainingPipeline:
     ) -> ModelEvaluationArtifact:
         try:
             logger.info("Starting model evaluation component")
+            evaluation_context: dict[str, Any] = {"mode": "pipeline"}
+            if self.source_frozen_parity_report is not None:
+                evaluation_context["source_frozen_parity_stage"] = {
+                    "status": self.source_frozen_parity_report.get("status"),
+                    "report_path": self.source_frozen_parity_report.get(
+                        "report_path"
+                    ),
+                    "lineage_recording": self.source_frozen_parity_report.get(
+                        "lineage_recording", {}
+                    ),
+                }
             model_evaluation = ModelEvaluation(
                 model_evaluation_config=self.model_evaluation_config,
                 model_trainer_artifact=model_trainer_artifact,
+                evaluation_context=evaluation_context,
             )
             model_evaluation_artifact = model_evaluation.evaluate_model()
             logger.info(
@@ -154,6 +186,14 @@ class TrainingPipeline:
                 data_ingestion_artifact=data_ingestion_artifact,
                 data_transformation_artifact=data_transformation_artifact
             )
+            self.source_frozen_parity_report = self.start_source_frozen_parity()
+            if (
+                self.source_frozen_parity_report.get("status") == "verified"
+                and self.source_frozen_parity_report.get("lineage_recording", {}).get(
+                    "local_metrics_json_updated"
+                )
+            ):
+                self._reload_lineage_from_metrics(model_trainer_artifact)
             model_evaluation_artifact = self.start_model_evaluation(
                 model_trainer_artifact=model_trainer_artifact
             )
@@ -177,6 +217,82 @@ class TrainingPipeline:
             return model_evaluation_artifact
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e
+
+    @staticmethod
+    def _source_frozen_parity_required() -> bool:
+        model_spec = read_yaml_file(MODEL_SPEC_FILE_PATH)
+        parity_policy = model_spec.get("evaluation_policy", {}).get("parity", {})
+        required = parity_policy.get("source_frozen_prediction_parity_required")
+        if not isinstance(required, bool):
+            raise ValueError(
+                "evaluation_policy.parity.source_frozen_prediction_parity_required "
+                "must be boolean"
+            )
+        return required
+
+    def start_source_frozen_parity(self) -> dict[str, Any]:
+        """Certify and attach source-frozen parity before final evaluation.
+
+        A failed certificate is still written and passed to the canonical
+        evaluator as evidence. A verified certificate updates the trainer
+        metrics lineage on disk; ``run_pipeline`` reloads that lineage into the
+        in-memory trainer artifact before evaluation.
+        """
+        try:
+            candidate_artifact_dir = (
+                Path(self.model_trainer_config.model_trainer_dir).resolve().parent
+            )
+            if not self._source_frozen_parity_required():
+                report = {
+                    "status": "not_required",
+                    "candidate_artifact_dir": str(candidate_artifact_dir),
+                    "report_path": None,
+                    "lineage_recording": {"requested": False},
+                }
+                logger.info("Source-frozen parity stage is disabled by policy")
+                return report
+
+            logger.info(
+                "Starting source-frozen parity stage for candidate artifact: %s",
+                candidate_artifact_dir,
+            )
+            certification = SourceFrozenParityCertification(
+                candidate_artifact_dir=candidate_artifact_dir,
+                apply_lineage=True,
+            )
+            report = certification.run()
+            report["report_path"] = str(certification.report_path)
+            logger.info(
+                "Source-frozen parity stage completed: status=%s report=%s",
+                report.get("status"),
+                certification.report_path,
+            )
+            return report
+        except Exception as error:
+            raise VehicleInsuranceException(error, sys) from error
+
+    @staticmethod
+    def _reload_lineage_from_metrics(
+        model_trainer_artifact: ModelTrainerArtifact,
+    ) -> None:
+        """Refresh the in-memory artifact after parity updates metrics.json."""
+        metrics_path = Path(model_trainer_artifact.metrics_file_path)
+        try:
+            with metrics_path.open(encoding="utf-8") as metrics_file:
+                payload = json.load(metrics_file)
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(
+                "Could not reload trainer lineage after parity certification: "
+                f"{metrics_path}"
+            ) from error
+
+        lineage = payload.get("lineage")
+        if not isinstance(lineage, dict):
+            raise ValueError(
+                "Trainer metrics has no lineage after parity certification: "
+                f"{metrics_path}"
+            )
+        model_trainer_artifact.lineage = lineage
 
 
 if __name__ == "__main__":
