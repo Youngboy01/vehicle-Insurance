@@ -314,6 +314,12 @@ policy gate rejected the candidate; exit code `1` means replay execution failed.
 See [Git Lineage and Release Preflight](docs/git_lineage.md) for the clean-tree
 requirements and provenance recorded before a fresh candidate run.
 
+> Regarding the existing model: its artifact was created before Git provenance
+> existed, so its exact source state cannot be reconstructed. Keep it as
+> historical evidence, but do not use it as a release-qualified model or
+> retrofit unknown Git information. The next fresh run will train the current
+> model again under a clean, traceable commit.
+
 ---
 
 ## 🖥 Running the API

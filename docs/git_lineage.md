@@ -78,11 +78,16 @@ The pipeline fails before ingestion when the strict Git policy is violated.
 
 ## Existing artifacts
 
-Artifacts created before `lineage.git_provenance` was introduced cannot be
-repaired reliably after the fact because their exact uncommitted source patch
-was never captured. They remain useful as historical evidence, but replay or
-release evaluation must treat them as legacy/non-release artifacts. A fresh
-candidate must be trained after the provenance implementation is committed.
+> Regarding the existing model: its artifact was created before Git provenance
+> existed, so its exact source state cannot be reconstructed. Keep it as
+> historical evidence, but do not use it as a release-qualified model or
+> retrofit unknown Git information. The next fresh run will train the current
+> model again under a clean, traceable commit.
+
+Artifacts created before `lineage.git_provenance` was introduced therefore
+remain historical evidence only. Replay or release evaluation must treat them
+as legacy/non-release artifacts rather than attempting to infer a missing
+source patch or retrofit unknown Git information.
 
 This policy is independent of Champion/Challenger behavior. The current phase
 continues to use candidate-only evaluation, with Champion comparison and

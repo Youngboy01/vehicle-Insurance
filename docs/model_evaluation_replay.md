@@ -95,6 +95,12 @@ the exact source-state evidence required for a release-quality decision. Replay
 must treat such artifacts as legacy/non-release evidence; it must not invent or
 retrofit a Git patch identity that was not captured during training.
 
+> Regarding the existing model: its artifact was created before Git provenance
+> existed, so its exact source state cannot be reconstructed. Keep it as
+> historical evidence, but do not use it as a release-qualified model or
+> retrofit unknown Git information. The next fresh run will train the current
+> model again under a clean, traceable commit.
+
 ## When to run replay
 
 Run replay after applying reviewed lineage/parity evidence to an existing

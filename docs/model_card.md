@@ -180,6 +180,12 @@ The corrected trainer now matches the frozen notebook split semantics and final-
 
 The current model specification defines provisional numeric practical-improvement and non-inferiority tolerances. They remain pending owner approval. The latest candidate's source-frozen parity is verified, but it remains unpromoted because promotion is disabled. Champion comparison is disabled during the current candidate-only phase; the historical reference is retained only as dormant future-workflow context and is not used as the active model.
 
+> Regarding the existing model: its artifact was created before Git provenance
+> existed, so its exact source state cannot be reconstructed. Keep it as
+> historical evidence, but do not use it as a release-qualified model or
+> retrofit unknown Git information. The next fresh run will train the current
+> model again under a clean, traceable commit.
+
 ## 9. Operating point and campaign decisions
 
 The current serving path returns a single-customer class prediction and score. It does not yet rank a batch or select a top-K campaign list.
