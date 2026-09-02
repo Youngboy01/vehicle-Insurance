@@ -1,0 +1,89 @@
+# Existing-candidate evaluation replay
+
+## Purpose
+
+The replay utility reruns the canonical validation-based release evaluator
+against an existing local `ModelTrainerArtifact`. It is used after a candidate's
+lineage has been corrected or additional evidence, such as source-frozen parity,
+has been recorded.
+
+Replay is not retraining. It does not ingest MongoDB data, refit preprocessing,
+fit a LightGBM model, download a model from MLflow, register a model, or mutate a
+registry alias. It reads the candidate's recorded
+`model_trainer/metrics.json`, verifies that the local `model_trainer/model.pkl`
+exists, reconstructs the typed trainer artifact, and delegates the decision to
+`components/modelEvaluation.py`.
+
+## Command Prompt usage
+
+Run from the repository root with the project's `uv` environment:
+
+```cmd
+cd /d D:\projVehicleInsurance\vehicle-Insurance
+uv run python -m vehicle_insurance.verification.replay_model_evaluation --candidate-artifact-dir artifact\08_31_2026_01_05_59
+```
+
+The default output is:
+
+```text
+artifact\08_31_2026_01_05_59\model_evaluation\replay_report.json
+```
+
+The existing `model_evaluation\report.json` is not overwritten. To choose a
+different report path:
+
+```cmd
+uv run python -m vehicle_insurance.verification.replay_model_evaluation --candidate-artifact-dir artifact\08_31_2026_01_05_59 --report-file-path artifact\08_31_2026_01_05_59\model_evaluation\replay_report_2026-09-02.json
+```
+
+The command loads `.env` without overriding variables already supplied by the
+execution environment. MLflow credentials are needed only for the evaluator's
+read-only Champion lookup.
+
+## Decision and exit codes
+
+The JSON summary printed to the console contains the candidate run/model IDs,
+decision, promotion status, report path, and reason codes.
+
+- Exit `0`: evaluation completed and all configured gates passed.
+- Exit `2`: evaluation completed, but one or more gates rejected the candidate.
+- Exit `1`: replay execution failed because the artifact, configuration, or
+  MLflow evaluation dependency was unavailable or invalid.
+
+Use `--fail-on-rejection` when an orchestration job should treat a policy
+rejection as an execution failure and return exit `1` instead of exit `2`.
+
+## Evidence recorded in the replay report
+
+The report records an `evaluation_execution` object containing:
+
+- `mode: replay`;
+- the candidate artifact directory;
+- the source `metrics.json` and trained-model paths;
+- the SHA-256 hash of the source metrics file;
+- the prior evaluation report path and hash when that report exists; and
+- the UTC replay timestamp.
+
+The evaluator then applies the locked policy in the normal order:
+
+1. candidate identity and recorded validation metrics;
+2. repeated-CV stability evidence;
+3. contract, model-spec, dataset, dependency, feature-order, and fit-scope
+   lineage;
+4. source-frozen split/prediction parity evidence;
+5. read-only comparison with a valid Champion when one exists; and
+6. final-test metrics copied for reporting only.
+
+The current `promotion.enabled: false` setting remains authoritative. A passing
+replay therefore reports `eligible_but_promotion_disabled` and performs no
+registration or alias change. If the registered Champion alias points to a
+legacy run without the required validation evidence, the evaluator fails closed
+with an explicit reason code rather than silently treating that run as a valid
+comparison baseline.
+
+## When to run replay
+
+Run replay after applying reviewed lineage/parity evidence to an existing
+candidate, after changing evaluator code, or after changing the versioned
+evaluation policy. Do not use it as a substitute for a fresh training run when
+the data, preprocessing, model, split protocol, or model specification changes.

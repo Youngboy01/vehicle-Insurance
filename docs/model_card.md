@@ -14,7 +14,7 @@
 | Intended user | Marketing or campaign-operations team |
 | Serving interface | FastAPI `/predict` endpoint |
 | Review status | Phase 1 benchmark candidate; not production-approved and not promoted |
-| Last reviewed | 2026-08-30 |
+| Last reviewed | 2026-09-02 |
 
 This model estimates whether a customer is likely to respond positively to a vehicle-insurance cross-sell offer. It is a marketing-prioritization model, not a claims, pricing, underwriting, fraud, or eligibility model.
 
@@ -130,6 +130,7 @@ The verified benchmark training path contains these stages:
 9. Evaluate the untouched test split once through the final pipeline.
 10. Persist and log metrics, artifacts, feature order, versions, hashes, and MLflow lineage.
 11. Evaluate release readiness using the validation-based policy; registry promotion is currently disabled.
+12. Replay evaluation against an existing candidate when reviewed lineage or parity evidence is added, without retraining.
 
 The frozen preprocessing uses:
 
@@ -175,9 +176,9 @@ If no valid Champion exists, the evaluator applies the absolute validation and s
 
 ### Evaluation limitations
 
-The corrected trainer now matches the frozen notebook split semantics and final-fit workflow. The final test set is evaluated once after candidate and operating-point decisions. The production acceptance evaluator is still being aligned: it must use validation top-K metrics, stability, source-frozen parity, and segment checks rather than test recall.
+The corrected trainer now matches the frozen notebook split semantics and final-fit workflow. The final test set is evaluated once after candidate and operating-point decisions. The production acceptance evaluator is now aligned with validation top-K metrics, stability, source-frozen parity, lineage, and read-only Champion comparison rather than test recall. Existing candidates can be re-evaluated from their recorded trainer artifact after lineage evidence is updated.
 
-The current model specification now defines provisional numeric practical-improvement and non-inferiority tolerances. They remain pending owner approval, and the latest candidate remains unpromoted because source-frozen prediction parity is not yet verified and promotion is disabled.
+The current model specification defines provisional numeric practical-improvement and non-inferiority tolerances. They remain pending owner approval. The latest candidate's source-frozen parity is verified, but it remains unpromoted because promotion is disabled and the current legacy Champion evidence is not valid for the new validation-based comparison policy.
 
 ## 9. Operating point and campaign decisions
 
@@ -219,7 +220,7 @@ Important limitations include:
 2. The current dataset does not establish a campaign treatment/control design.
 3. The model estimates association with historical response and does not establish causation.
 4. The probability output has not been formally calibrated.
-5. The validation-based acceptance and promotion evaluator is not yet aligned with the frozen metric policy.
+5. The validation-based acceptance evaluator is implemented, but the provisional thresholds and production promotion workflow are not owner-approved.
 6. `Region_Code` and `Policy_Sales_Channel` may be categorical codes rather than continuous measurements.
 7. Data drift, novel categories, changed campaign behavior, and changed customer populations may reduce performance.
 8. The API currently scores one record at a time and does not yet implement complete campaign-budget selection.
@@ -260,9 +261,9 @@ The model card should be updated before a model is promoted to a materially diff
 
 ### Required before claiming a credible model
 
-- Implement the validation-based evaluation and release-readiness gate.
+- Maintain the validation-based evaluation and release-readiness gate, including replay evidence after lineage updates.
 - Obtain owner approval for the provisional practical-improvement and non-inferiority tolerances in `configs/model_spec.yaml`.
-- Complete source-frozen split-ID and prediction parity checks where reference artifacts are available.
+- Preserve the verified source-frozen split-ID and prediction parity certificate when the reference artifacts remain unchanged.
 - Complete required segment-level performance review.
 - Validate data provenance, snapshot metadata, duplicates, split overlap, and target prevalence.
 

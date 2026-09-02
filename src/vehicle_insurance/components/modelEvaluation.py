@@ -60,10 +60,16 @@ class ModelEvaluation:
         self,
         model_evaluation_config: ModelEvaluationConfig,
         model_trainer_artifact: ModelTrainerArtifact,
+        evaluation_context: dict[str, Any] | None = None,
     ) -> None:
         try:
             self.model_trainer_artifact = model_trainer_artifact
             self.model_evaluation_config = model_evaluation_config
+            if evaluation_context is not None and not isinstance(
+                evaluation_context, dict
+            ):
+                raise TypeError("evaluation_context must be a dictionary when provided")
+            self.evaluation_context = dict(evaluation_context or {"mode": "pipeline"})
             self.model_spec = read_yaml_file(MODEL_SPEC_FILE_PATH)
             self.schema_config = read_yaml_file(SCHEMA_FILE_PATH)
             self._validate_policy()
@@ -671,6 +677,7 @@ class ModelEvaluation:
                 promotion_status = "not_performed"
 
             report = {
+                "evaluation_execution": self.evaluation_context,
                 "evaluation_policy": {
                     "model_spec_version": str(self.model_spec["version"]),
                     "contract_version": str(self.schema_config["version"]),
@@ -729,7 +736,14 @@ class ModelEvaluation:
                 lineage=candidate_lineage,
                 evaluation_report_file_path=self.model_evaluation_config.report_file_path,
             )
-            logger.info("Model evaluation artifact: %s", artifact)
+            logger.info(
+                "Model evaluation artifact created: candidate_run_id=%s "
+                "evaluation_passed=%s promotion_status=%s report=%s",
+                artifact.candidate_run_id,
+                artifact.evaluation_passed,
+                artifact.promotion_status,
+                artifact.evaluation_report_file_path,
+            )
             logger.info(
                 "Model evaluation completed: decision=%s promotion_status=%s",
                 decision,

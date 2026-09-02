@@ -73,6 +73,22 @@ uv run python -m vehicle_insurance.verification.source_frozen_parity --candidate
 logs `lineage/source_frozen_parity.json` and verification tags to that
 candidate's existing MLflow run. No model registry alias is changed.
 
+## Replay evaluation after certification
+
+After a successful certificate has been applied to the candidate lineage, replay
+the release evaluator against the existing artifact without retraining:
+
+```cmd
+cd /d D:\projVehicleInsurance\vehicle-Insurance
+uv run python -m vehicle_insurance.verification.replay_model_evaluation --candidate-artifact-dir artifact\08_31_2026_01_05_59
+```
+
+The replay reads `model_trainer\metrics.json`, preserves the earlier
+`model_evaluation\report.json`, and writes `model_evaluation\replay_report.json`.
+It reruns validation, stability, lineage, parity, and read-only Champion gates.
+Final-test metrics remain reporting-only and `promotion.enabled: false` means no
+MLflow registration or alias mutation occurs.
+
 ## Failure handling
 
 The utility writes structured stage errors to the report whenever possible and

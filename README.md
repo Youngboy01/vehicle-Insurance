@@ -2,7 +2,7 @@
 
 An end-to-end machine learning system that predicts whether a health insurance customer will respond positively to a **vehicle insurance cross-sell** offer. The project goes beyond a notebook model: it is a modular pipeline with schema validation, experiment tracking, explicit model lineage, and a served REST API — all containerized with Docker.
 
-> **Status:** MongoDB ingestion, contract validation, transformation, notebook-aligned training, MLflow lineage, and benchmark verification are complete. Evaluation/promotion orchestration and production deployment remain in progress (see [Roadmap](#-roadmap)).
+> **Status:** MongoDB ingestion, contract validation, transformation, notebook-aligned training, MLflow lineage, source-frozen parity certification, and validation-based evaluation are implemented. Production approval, promotion, deployment, and monitoring remain in progress (see [Roadmap](#-roadmap)).
 
 ---
 
@@ -19,6 +19,7 @@ An end-to-end machine learning system that predicts whether a health insurance c
 - [Getting Started](#-getting-started)
 - [Environment Variables](#-environment-variables)
 - [Running the Training Pipeline](#-running-the-training-pipeline)
+- [Replaying Existing-candidate Evaluation](#-replaying-existing-candidate-evaluation)
 - [Running the API](#-running-the-api)
 - [Docker](#-docker)
 - [Model Registry Workflow](#-model-registry-workflow)
@@ -35,7 +36,7 @@ Rather than training a model once and calling it done, this project implements t
 
 - **Schema-validated data ingestion** from MongoDB
 - **A reusable, versioned preprocessing pipeline** (fit once, applied consistently at train and inference time)
-- **Experiment tracking and model lineage** with promotion disabled until the evaluation policy is implemented
+- **Experiment tracking, source-frozen parity certification, and model lineage** with promotion disabled pending owner approval and operational gates
 - **A served model** behind a REST API, with retraining and hot-swap controls still subject to evaluation/promotion alignment
 - **A containerized runtime** for reproducible deployment
 
@@ -87,7 +88,7 @@ The model card is a living document and must be updated whenever the model, data
    │  2. Data Validation  → Pandera schema checks           │
    │  3. Data Transform.  → fit on train, transform all splits │
    │  4. Model Training   → frozen LightGBM + MLflow lineage    │
-   │  5. Model Evaluation → validation policy (in progress)    │
+   │  5. Model Evaluation → validation policy + replay evidence │
    └───────────────────────────┬───────────────────────────┘
                                 │
                                 ▼
@@ -151,7 +152,7 @@ vehicle-Insurance/
     │   ├── dataValidation.py       # Pandera schema validation
     │   ├── dataTransformation.py   # ColumnTransformer pipeline
     │   ├── modelTrainer.py         # LightGBM training + MLflow logging
-    │   └── modelEvaluation.py      # Evaluation policy and promotion integration (in progress)
+    │   └── modelEvaluation.py      # Validation-based evaluation policy
     ├── configurations/
     │   └── mongodb_connection.py   # MongoDB client (singleton)
     ├── data_access/
@@ -160,10 +161,13 @@ vehicle-Insurance/
     │   ├── config_entity.py        # Per-stage config dataclasses
     │   └── artifact_entity.py      # Per-stage output dataclasses
     ├── pipeline/
-    │   └── training_pipeline.py    # Orchestrates stages; evaluation integration pending
+    │   └── training_pipeline.py    # End-to-end stage orchestration
     ├── constants/__init__.py       # Central constants
     ├── exceptions/handle_exception.py
     ├── logger/logger_config.py
+    ├── verification/
+    │   ├── source_frozen_parity.py # Notebook-to-production certification
+    │   └── replay_model_evaluation.py # Existing-candidate evaluation replay
     └── utils/__init__.py           # pickle/yaml/numpy IO helpers, MLflow client
 ```
 
@@ -171,7 +175,7 @@ vehicle-Insurance/
 
 ## ⚙️ Pipeline Stages
 
-The intended training pipeline runs five stages in sequence, each producing a typed **artifact** consumed by the next stage. The first four stages and the trainer are benchmark-verified; the evaluation stage still requires alignment with the frozen acceptance policy.
+The training pipeline runs five stages in sequence, each producing a typed **artifact** consumed by the next stage. In addition, the evaluation policy can be replayed against an existing candidate artifact after lineage evidence is updated, without retraining.
 
 ### 1. Data Ingestion
 Pulls the raw `INSURANCE_DATA` collection from MongoDB Atlas into a timestamped feature-store CSV. The extracted DataFrame is sorted locally by ascending `id` and split using the frozen stratified 80/10/10 protocol with `random_state=42`. The resulting `train.csv`, `validation.csv`, and `test.csv` files are disjoint and cover the source IDs exactly once.
@@ -191,7 +195,7 @@ The transformer is fit on training data only, applied to validation and test dat
 Loads the frozen LightGBM parameters and `scale_pos_weight` from `configs/model_spec.yaml`. The trainer first fits a train-only candidate for validation and repeated stability analysis, then clones and refits the preprocessing/model pipeline on train plus validation. The untouched test split is evaluated once through that final pipeline. Metrics, feature order, model URI, data hash, Git/dependency versions, and MLflow lineage are persisted locally and logged to MLflow.
 
 ### 5. Model Evaluation
-The evaluation component now compares candidate validation metrics using primary top-K measures (`precision_at_10pct` and `lift_at_10pct`), supporting metrics, repeated-CV stability, lineage/source-frozen parity, and Champion validation evidence when available. Provisional numeric thresholds are versioned in `configs/model_spec.yaml` and remain pending owner approval. Final-test metrics are reporting-only. Registry alias mutation remains disabled while `promotion.enabled` is `false`.
+The evaluation component compares candidate validation metrics using primary top-K measures (`precision_at_10pct` and `lift_at_10pct`), supporting metrics, repeated-CV stability, lineage/source-frozen parity, and Champion validation evidence when available. Provisional numeric thresholds are versioned in `configs/model_spec.yaml` and remain pending owner approval. Final-test metrics are reporting-only. Registry alias mutation remains disabled while `promotion.enabled` is `false`. See [Existing-candidate evaluation replay](docs/model_evaluation_replay.md) to regenerate evaluation evidence from a completed candidate without retraining.
 
 ---
 
@@ -282,7 +286,24 @@ cd /d D:\projVehicleInsurance\vehicle-Insurance
 uv run python -m vehicle_insurance.pipeline.training_pipeline
 ```
 
-The public module entry point executes ingestion, validation, transformation, model training, and evaluation in sequence. It returns an evaluation artifact and saves raw data, splits, transformed arrays, preprocessor, trained model, metrics, evaluation report, and lineage under a timestamped `artifact/` directory. Run from the repository root so relative paths resolve under the D: repository. Promotion remains disabled until the evaluation policy and source-frozen parity gates are approved. The private `tests\run_real_training.py` helper remains available for stage-level benchmark runs when evaluation is not required.
+The public module entry point executes ingestion, validation, transformation, model training, and evaluation in sequence. It returns an evaluation artifact and saves raw data, splits, transformed arrays, preprocessor, trained model, metrics, evaluation report, and lineage under a timestamped `artifact/` directory. Run from the repository root so relative paths resolve under the D: repository. Promotion remains disabled until the evaluation policy, source-frozen parity, segment review, and owner approval gates are complete. The private `tests\run_real_training.py` helper remains available for stage-level benchmark runs when evaluation is not required.
+
+### Replaying Existing-candidate Evaluation
+
+When a completed candidate receives corrected or newly certified lineage, replay
+the evaluation without rerunning ingestion, transformation, or training:
+
+```cmd
+cd /d D:\projVehicleInsurance\vehicle-Insurance
+uv run python -m vehicle_insurance.verification.replay_model_evaluation --candidate-artifact-dir artifact\08_31_2026_01_05_59
+```
+
+The replay writes `model_evaluation\replay_report.json` inside the candidate
+artifact and preserves the earlier `report.json`. It reads the recorded trainer
+metrics, reruns the validation/stability/lineage/parity/Champion gates, keeps
+test metrics reporting-only, and never mutates MLflow aliases. Exit code `0`
+means the candidate passed; exit code `2` means evaluation completed but a
+policy gate rejected the candidate; exit code `1` means replay execution failed.
 
 ---
 
@@ -313,7 +334,7 @@ docker run -p 8080:8080 --env-file .env vehicle-insurance
 
 ## 🏆 Model Registry Workflow
 
-The current trainer logs a new candidate model and complete lineage to MLflow. The evaluation/promotion component is being replaced and must use validation top-K metrics, stability, source-frozen parity, and explicit acceptance thresholds. Promotion is currently disabled in `configs/model_spec.yaml`; no claim should be made that retraining automatically updates the served champion.
+The current trainer logs a new candidate model and complete lineage to MLflow. The evaluation component consumes that candidate directly and applies validation top-K metrics, stability, source-frozen parity, and explicit acceptance thresholds. Promotion is currently disabled in `configs/model_spec.yaml`; no claim should be made that retraining or evaluation automatically updates the served champion. Existing candidates can be replay-evaluated with the documented utility.
 
 ---
 
