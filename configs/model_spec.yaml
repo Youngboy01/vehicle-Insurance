@@ -1,4 +1,4 @@
-version: 1
+version: 2
 contract_version: "1.0.0"
 status: frozen_candidate
 
@@ -88,6 +88,11 @@ data_protocol:
 
 evaluation_policy:
   purpose: production_candidate_acceptance_and_release_readiness
+  lineage:
+    git:
+      require_clean_tree: true
+      fail_if_unavailable: true
+      fail_on_untracked_files: true
   # Active mode is candidate-only. Flip this single flag to true only when
   # the future Champion/Challenger comparison workflow is intentionally ready.
   champion_challenger_workflow:

@@ -1,8 +1,8 @@
 # Vehicle Insurance Cross-Sell Data Contract
 
-**Contract version:** 1.0.0  
-**Status:** Phase 1 benchmark contract; no company partner is currently onboarded  
-**Model specification:** `configs/model_spec.yaml` version 1  
+**Contract version:** 1.0.0
+**Status:** Phase 1 benchmark contract; no company partner is currently onboarded
+**Model specification:** `configs/model_spec.yaml` version 2
 **Last reviewed:** 2026-08-27
 
 ## 1. Purpose and scope
@@ -518,9 +518,18 @@ Example release lineage:
 ```yaml
 lineage:
   contract_version: "1.0.0"
-  model_spec_version: "1"
+  model_spec_version: "2"
   model_uri: "models:/m-3aacf46fc018452ab9aab96033eb7e56"
   git_commit: "<commit>"
+  git_provenance:
+    repository_root: "<repository-root>"
+    branch: "<branch>"
+    commit: "<commit>"
+    is_dirty: false
+    status_sha256: "<sha256>"
+    patch_sha256: "<sha256>"
+    model_spec_sha256: "<sha256>"
+    schema_sha256: "<sha256>"
   dependency_lock_hash: "<sha256>"
   dataset_snapshot_id: "<snapshot>"
   dataset_hash: "<sha256>"

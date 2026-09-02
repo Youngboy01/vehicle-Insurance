@@ -28,7 +28,12 @@ from vehicle_insurance.entities.config_entity import (
 )
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
-from vehicle_insurance.utils import read_yaml_file
+from vehicle_insurance.utils import (
+    capture_git_provenance,
+    read_yaml_file,
+    resolve_repository_root,
+    validate_git_provenance,
+)
 from vehicle_insurance.verification.source_frozen_parity import (
     SourceFrozenParityCertification,
 )
@@ -44,6 +49,9 @@ class TrainingPipeline:
             # Load local development configuration without overriding values
             # supplied by the execution environment or deployment platform.
             load_dotenv(override=False)
+            self.git_provenance = capture_git_provenance(
+                resolve_repository_root()
+            )
             self.training_pipeline_config = TrainingPipelineConfig()
             artifact_dir = self.training_pipeline_config.artifact_dir
             self.data_ingestion_config = DataIngestionConfig(
@@ -128,6 +136,7 @@ class TrainingPipeline:
                 model_trainer_config=self.model_trainer_config,
                 data_transformation_artifact=data_transformation_artifact,
                 data_ingestion_artifact=data_ingestion_artifact,
+                git_provenance=self.git_provenance,
             )
             model_trainer_artifact = model_trainer.train()
             logger.info(
@@ -169,6 +178,7 @@ class TrainingPipeline:
     def run_pipeline(self) -> ModelEvaluationArtifact:
         """Run all pipeline stages and return the evaluation artifact."""
         try:
+            self._validate_git_preflight()
             data_ingestion_artifact = self.start_data_ingestion()
             data_validation_artifact = self.start_data_validation(
                 data_ingestion_artifact=data_ingestion_artifact
@@ -217,6 +227,25 @@ class TrainingPipeline:
             return model_evaluation_artifact
         except Exception as e:
             raise VehicleInsuranceException(e, sys) from e
+
+    def _validate_git_preflight(self) -> None:
+        """Block release-quality runs before ingestion or model creation."""
+        model_spec = read_yaml_file(MODEL_SPEC_FILE_PATH)
+        git_policy = (
+            model_spec.get("evaluation_policy", {})
+            .get("lineage", {})
+            .get("git")
+        )
+        if not isinstance(git_policy, dict):
+            raise ValueError(
+                "evaluation_policy.lineage.git must be a dictionary"
+            )
+        validate_git_provenance(self.git_provenance, git_policy)
+        logger.info(
+            "Git provenance preflight passed: commit=%s branch=%s",
+            self.git_provenance["commit"],
+            self.git_provenance["branch"],
+        )
 
     @staticmethod
     def _source_frozen_parity_required() -> bool:

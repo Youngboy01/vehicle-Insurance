@@ -20,6 +20,7 @@ An end-to-end machine learning system that predicts whether a health insurance c
 - [Environment Variables](#-environment-variables)
 - [Running the Training Pipeline](#-running-the-training-pipeline)
 - [Replaying Existing-candidate Evaluation](#-replaying-existing-candidate-evaluation)
+- [Git Lineage and Release Preflight](#-git-lineage-and-release-preflight)
 - [Running the API](#-running-the-api)
 - [Docker](#-docker)
 - [Model Registry Workflow](#-model-registry-workflow)
@@ -309,6 +310,9 @@ under the current candidate-only policy, keeps test metrics reporting-only, and
 never mutates MLflow aliases. Exit code `0`
 means the candidate passed; exit code `2` means evaluation completed but a
 policy gate rejected the candidate; exit code `1` means replay execution failed.
+
+See [Git Lineage and Release Preflight](docs/git_lineage.md) for the clean-tree
+requirements and provenance recorded before a fresh candidate run.
 
 ---
 

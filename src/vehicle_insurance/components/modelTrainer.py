@@ -4,11 +4,9 @@ import hashlib
 import json
 import os
 import platform
-import subprocess
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from math import floor
-from pathlib import Path
 
 import mlflow
 import mlflow.sklearn
@@ -42,10 +40,13 @@ from vehicle_insurance.entities.config_entity import ModelTrainerConfig
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
 from vehicle_insurance.utils import (
+    capture_git_provenance,
     load_numpy_array_data,
     load_object,
     read_yaml_file,
     save_object,
+    resolve_repository_root,
+    validate_git_provenance,
 )
 
 logger = setup_logger()
@@ -59,6 +60,7 @@ class ModelTrainer:
         model_trainer_config: ModelTrainerConfig,
         data_transformation_artifact: DataTransformationArtifact,
         data_ingestion_artifact: DataIngestionArtifact,
+        git_provenance: dict | None = None,
     ) -> None:
         try:
             self.model_trainer_config = model_trainer_config
@@ -67,6 +69,11 @@ class ModelTrainer:
             self.model_spec = read_yaml_file(MODEL_SPEC_FILE_PATH)
             self.schema_config = read_yaml_file(SCHEMA_FILE_PATH)
             self._validate_model_spec()
+            self.git_provenance = (
+                dict(git_provenance)
+                if git_provenance is not None
+                else capture_git_provenance(resolve_repository_root())
+            )
         except Exception as error:
             raise VehicleInsuranceException(error, sys) from error
 
@@ -127,6 +134,16 @@ class ModelTrainer:
                 f"{missing_reference_fields}"
             )
 
+        git_policy = (
+            self.model_spec.get("evaluation_policy", {})
+            .get("lineage", {})
+            .get("git")
+        )
+        if not isinstance(git_policy, dict):
+            raise ValueError(
+                "evaluation_policy.lineage.git must be a dictionary"
+            )
+
     @staticmethod
     def _load_and_split_data(file_path: str) -> tuple[np.ndarray, np.ndarray]:
         try:
@@ -157,27 +174,6 @@ class ModelTrainer:
             return "not_installed"
 
     @staticmethod
-    def _git_value(*arguments: str) -> str:
-        try:
-            result = subprocess.run(
-                ["git", *arguments],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            return result.stdout.strip() or "not_recorded"
-        except (OSError, subprocess.CalledProcessError):
-            return "not_recorded"
-
-    @staticmethod
-    def _sha256_file(file_path: Path) -> str:
-        digest = hashlib.sha256()
-        with file_path.open("rb") as file:
-            for chunk in iter(lambda: file.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
-
-    @staticmethod
     def _dataset_hash(
         train_df: pd.DataFrame,
         validation_df: pd.DataFrame,
@@ -199,18 +195,17 @@ class ModelTrainer:
         test_df: pd.DataFrame,
     ) -> dict:
         dataset_hash = self._dataset_hash(train_df, validation_df, test_df)
-        uv_lock_path = Path("uv.lock")
         return {
             "contract_version": str(self.schema_config["version"]),
             "model_spec_version": str(self.model_spec["version"]),
-            "git_branch": self._git_value("branch", "--show-current"),
-            "git_commit": self._git_value("rev-parse", "HEAD"),
+            "git_branch": self.git_provenance["branch"],
+            "git_commit": self.git_provenance["commit"],
+            "git_provenance": dict(self.git_provenance),
             "python_version": platform.python_version(),
-            "dependency_lock_hash": (
-                self._sha256_file(uv_lock_path)
-                if uv_lock_path.is_file()
-                else "not_recorded"
-            ),
+            "dependency_lock_hash": self.git_provenance.get(
+                "dependency_lock_sha256"
+            )
+            or "not_recorded",
             "lightgbm_version": self._package_version("lightgbm"),
             "scikit_learn_version": self._package_version("scikit-learn"),
             "mlflow_version": self._package_version("mlflow"),
@@ -471,6 +466,10 @@ class ModelTrainer:
 
     def train(self) -> ModelTrainerArtifact:
         try:
+            validate_git_provenance(
+                self.git_provenance,
+                self.model_spec["evaluation_policy"]["lineage"]["git"],
+            )
             logger.info("Model Trainer started")
 
             # The transformed artifacts are retained for the train-only candidate
@@ -693,6 +692,13 @@ class ModelTrainer:
                         "source_tuning_run_id": lineage["source_tuning_run_id"],
                         "reference_final_run_id": lineage["reference_final_run_id"],
                         "promotion_status": "disabled",
+                        "git_commit": lineage["git_commit"],
+                        "git_is_dirty": str(
+                            lineage["git_provenance"]["is_dirty"]
+                        ).lower(),
+                        "git_patch_sha256": lineage["git_provenance"][
+                            "patch_sha256"
+                        ],
                     }
                 )
                 mlflow.log_metrics(

@@ -38,6 +38,7 @@ class ModelEvaluation:
     _REQUIRED_LINEAGE_FIELDS = (
         "contract_version",
         "model_spec_version",
+        "git_provenance",
         "git_branch",
         "git_commit",
         "python_version",
@@ -119,6 +120,24 @@ class ModelEvaluation:
         promotion_enabled = policy.get("promotion", {}).get("enabled")
         if not isinstance(promotion_enabled, bool):
             raise ValueError("evaluation_policy.promotion.enabled must be boolean")
+
+        git_policy = policy.get("lineage", {}).get("git")
+        if not isinstance(git_policy, dict):
+            raise ValueError("evaluation_policy.lineage.git must be a dictionary")
+        invalid_git_policy_fields = [
+            field
+            for field in (
+                "require_clean_tree",
+                "fail_if_unavailable",
+                "fail_on_untracked_files",
+            )
+            if not isinstance(git_policy.get(field), bool)
+        ]
+        if invalid_git_policy_fields:
+            raise ValueError(
+                "Git provenance policy fields must be boolean: "
+                f"{invalid_git_policy_fields}"
+            )
 
     @staticmethod
     def _finite_float(value: Any) -> float | None:
@@ -270,6 +289,52 @@ class ModelEvaluation:
             reason_codes.append("schema_version_mismatch")
         if lineage.get("model_spec_version") != expected_model_spec_version:
             reason_codes.append("model_spec_version_mismatch")
+
+        git_provenance = lineage.get("git_provenance")
+        if not isinstance(git_provenance, dict):
+            reason_codes.append("git_provenance_invalid")
+        else:
+            required_git_fields = (
+                "repository_root",
+                "branch",
+                "commit",
+                "is_dirty",
+                "status_sha256",
+                "patch_sha256",
+                "model_spec_sha256",
+                "schema_sha256",
+            )
+            for field in required_git_fields:
+                if field not in git_provenance or git_provenance[field] in (
+                    None,
+                    "",
+                ):
+                    reason_codes.append(f"git_provenance_field_missing:{field}")
+
+            if not isinstance(git_provenance.get("is_dirty"), bool):
+                reason_codes.append("git_provenance_dirty_state_invalid")
+
+            for field in (
+                "status_sha256",
+                "patch_sha256",
+                "model_spec_sha256",
+                "schema_sha256",
+            ):
+                value = git_provenance.get(field)
+                if not isinstance(value, str) or len(value) != 64 or any(
+                    character not in "0123456789abcdef"
+                    for character in value.lower()
+                ):
+                    reason_codes.append(f"git_provenance_hash_invalid:{field}")
+
+            git_policy = self.model_spec["evaluation_policy"]["lineage"]["git"]
+            untracked_files = git_provenance.get("untracked_files") or []
+            if git_policy["fail_on_untracked_files"] and untracked_files:
+                reason_codes.append("git_untracked_files_present")
+            if git_policy["require_clean_tree"] and git_provenance.get(
+                "is_dirty"
+            ):
+                reason_codes.append("git_worktree_dirty")
 
         content_hash = str(lineage.get("dataset_content_hash", ""))
         snapshot_id = str(lineage.get("dataset_snapshot_id", ""))

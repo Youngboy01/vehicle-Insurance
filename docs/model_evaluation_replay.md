@@ -90,6 +90,11 @@ the registered Champion alias points to a legacy run without the required
 validation evidence, the evaluator fails closed with an explicit reason code
 rather than silently treating that run as a valid comparison baseline.
 
+Artifacts created before `lineage.git_provenance` was introduced do not contain
+the exact source-state evidence required for a release-quality decision. Replay
+must treat such artifacts as legacy/non-release evidence; it must not invent or
+retrofit a Git patch identity that was not captured during training.
+
 ## When to run replay
 
 Run replay after applying reviewed lineage/parity evidence to an existing
