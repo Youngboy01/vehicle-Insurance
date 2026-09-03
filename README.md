@@ -85,7 +85,7 @@ The model card is a living document and must be updated whenever the model, data
    ┌─────────────────────────────────────────────────────┐
    │                  TRAINING PIPELINE                   │
    │                                                       │
-   │  1. Data Ingestion   → export + stratified 80/10/10 split │
+   │  1. Data Ingestion   → immutable MongoDB snapshot + split │
    │  2. Data Validation  → Pandera schema checks           │
    │  3. Data Transform.  → fit on train, transform all splits │
    │  4. Model Training   → frozen LightGBM + MLflow lineage    │
@@ -180,7 +180,7 @@ vehicle-Insurance/
 The training pipeline runs six stages in sequence, each producing a typed **artifact** consumed by the next stage. In addition, the evaluation policy can be replayed against an existing candidate artifact after lineage evidence is updated, without retraining.
 
 ### 1. Data Ingestion
-Pulls the raw `INSURANCE_DATA` collection from MongoDB Atlas into a unique per-run feature-store CSV. The extracted DataFrame is sorted locally by ascending `id` and split using the frozen stratified 80/10/10 protocol with `random_state=42`. The resulting `train.csv`, `validation.csv`, and `test.csv` files are disjoint and cover the source IDs exactly once.
+Runs a controlled MongoDB extraction in a snapshot session using the explicit training projection and an ascending indexed `id` order. Before the first run, create/check that index in Atlas or Compass; no JavaScript is required. The pipeline writes an immutable per-run `feature_store/data.csv` beside `feature_store/source_manifest.json`; the manifest records the snapshot ID, MongoDB namespace, filter, projection, read boundary, extraction timestamps, row count, ID range, and content hash. If both files already exist they are hash-verified and reused; a partial or altered pair aborts rather than overwriting evidence. A retryable read failure aborts the extraction, while a deliberately new pipeline run creates a new snapshot ID. A verified snapshot is then split using the frozen stratified 80/10/10 protocol with `random_state=42`. The resulting `train.csv`, `validation.csv`, and `test.csv` files are disjoint and cover the source IDs exactly once. See [MongoDB source provenance](docs/mongodb_provenance.md).
 
 ### 2. Data Validation
 Validates the training, validation, and test files against the versioned data contract using Pandera-backed checks. It checks required columns, target rules, dtypes, allowed categories, numeric constraints, null/NaN behavior, forbidden fields, and ID integrity, then writes a JSON validation report. If validation fails, the pipeline halts before transformation or training.
@@ -349,7 +349,7 @@ docker run -p 8080:8080 --env-file .env vehicle-insurance
 
 ## 🏆 Model Registry Workflow
 
-The current trainer logs a new candidate model and complete lineage to MLflow. The evaluation component consumes that candidate directly and applies validation top-K metrics, stability, source-frozen parity, and explicit acceptance thresholds. Promotion is currently disabled in `configs/model_spec.yaml`; no claim should be made that retraining or evaluation automatically updates the served champion. Existing candidates can be replay-evaluated with the documented utility.
+The current trainer logs a new candidate model and complete lineage to MLflow. The evaluation component consumes that candidate directly and applies validation top-K metrics, stability, source-frozen parity, immutable MongoDB snapshot provenance, and explicit acceptance thresholds. Promotion is currently disabled in `configs/model_spec.yaml`; no claim should be made that retraining or evaluation automatically updates the served champion. Existing candidates can be replay-evaluated with the documented utility, but artifacts created before the source-manifest contract are historical evidence rather than release-qualified models.
 
 ---
 

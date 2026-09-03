@@ -54,6 +54,17 @@ The default source CSV is:
 %CANDIDATE_ARTIFACT_DIR%\data_ingestion\feature_store\data.csv
 ```
 
+The adjacent source manifest is required for new release-quality candidates:
+
+```text
+%CANDIDATE_ARTIFACT_DIR%\data_ingestion\feature_store\source_manifest.json
+```
+
+The verifier validates that manifest against the CSV and candidate lineage,
+including the snapshot ID, MongoDB namespace, explicit projection, indexed
+ordering, and consistent read boundary. Pre-manifest artifacts remain
+historical evidence and are not retrofitted.
+
 The report is written to:
 
 ```text

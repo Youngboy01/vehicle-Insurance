@@ -1,4 +1,4 @@
-version: 2
+version: 3
 contract_version: "1.0.0"
 status: frozen_candidate
 
@@ -85,6 +85,20 @@ data_protocol:
   test_ratio: 0.1
   random_state: 42
   test_evaluation: completed_once
+  source_snapshot:
+    required: true
+    manifest_version: "1.0.0"
+    snapshot_version: 1
+    read_mode: snapshot_session
+    read_concern: snapshot
+    filter: {}
+    projection_source: schema.schemas.training.required_columns
+    ordering_field: id
+    ordering_direction: ascending
+    require_supporting_index: true
+    retry_behavior:
+      same_snapshot_read_failure: abort_extraction
+      new_extraction: new_snapshot_id
 
 evaluation_policy:
   purpose: production_candidate_acceptance_and_release_readiness
@@ -93,6 +107,12 @@ evaluation_policy:
       require_clean_tree: true
       fail_if_unavailable: true
       fail_on_untracked_files: true
+    source_snapshot:
+      require_manifest: true
+      require_immutable_snapshot: true
+      require_snapshot_read_boundary: true
+      require_explicit_projection: true
+      require_indexed_ordering: true
   # Active mode is candidate-only. Flip this single flag to true only when
   # the future Champion/Challenger comparison workflow is intentionally ready.
   champion_challenger_workflow:

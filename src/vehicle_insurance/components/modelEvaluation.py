@@ -22,6 +22,7 @@ from vehicle_insurance.entities.config_entity import ModelEvaluationConfig
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
 from vehicle_insurance.utils import get_mlflow_client, read_yaml_file
+from vehicle_insurance.utils.source_manifest import validate_source_manifest
 
 logger = setup_logger()
 
@@ -49,6 +50,7 @@ class ModelEvaluation:
         "schema_version",
         "dataset_snapshot_id",
         "dataset_content_hash",
+        "source_manifest",
         "final_transformed_feature_count",
         "final_transformed_feature_names",
         "model_input_feature_order",
@@ -137,6 +139,22 @@ class ModelEvaluation:
             raise ValueError(
                 "Git provenance policy fields must be boolean: "
                 f"{invalid_git_policy_fields}"
+            )
+
+        source_snapshot_policy = policy.get("lineage", {}).get("source_snapshot")
+        if not isinstance(source_snapshot_policy, dict) or any(
+            source_snapshot_policy.get(field) is not True
+            for field in (
+                "require_manifest",
+                "require_immutable_snapshot",
+                "require_snapshot_read_boundary",
+                "require_explicit_projection",
+                "require_indexed_ordering",
+            )
+        ):
+            raise ValueError(
+                "evaluation_policy.lineage.source_snapshot must require all "
+                "source provenance controls"
             )
 
     @staticmethod
@@ -342,8 +360,33 @@ class ModelEvaluation:
             character not in "0123456789abcdef" for character in content_hash.lower()
         ):
             reason_codes.append("dataset_content_hash_invalid")
-        if snapshot_id != f"sha256:{content_hash}":
-            reason_codes.append("dataset_snapshot_hash_mismatch")
+        source_manifest = lineage.get("source_manifest")
+        if not isinstance(source_manifest, dict):
+            reason_codes.append("source_manifest_invalid")
+        else:
+            try:
+                validate_source_manifest(source_manifest)
+            except ValueError as error:
+                reason_codes.append(f"source_manifest_invalid:{error}")
+            source_contract = self.schema_config.get("source", {})
+            source_identity = source_manifest.get("source", {})
+            for field in ("database", "collection"):
+                if source_identity.get(field) != source_contract.get(field):
+                    reason_codes.append(f"source_manifest_{field}_mismatch")
+            expected_projection = list(
+                self.schema_config["schemas"]["training"]["required_columns"]
+            )
+            if source_manifest.get("projection", {}).get("fields") != expected_projection:
+                reason_codes.append("source_manifest_projection_mismatch")
+            expected_filter = self.model_spec["data_protocol"]["source_snapshot"].get(
+                "filter", {}
+            )
+            if source_manifest.get("query", {}).get("filter") != expected_filter:
+                reason_codes.append("source_manifest_filter_mismatch")
+            if source_manifest.get("snapshot_id") != snapshot_id:
+                reason_codes.append("dataset_snapshot_hash_mismatch")
+            if source_manifest.get("content_hash") != content_hash:
+                reason_codes.append("dataset_content_hash_manifest_mismatch")
 
         expected_final_count = int(
             self.model_spec["features"]["preprocessing"][
@@ -379,6 +422,11 @@ class ModelEvaluation:
             "observed_contract_version": lineage.get("contract_version"),
             "observed_model_spec_version": lineage.get("model_spec_version"),
             "observed_dataset_snapshot_id": lineage.get("dataset_snapshot_id"),
+            "observed_source_snapshot_id": (
+                source_manifest.get("snapshot_id")
+                if isinstance(source_manifest, dict)
+                else None
+            ),
             "observed_final_transformed_feature_count": final_count,
             "reason_codes": reason_codes,
         }
@@ -802,6 +850,7 @@ class ModelEvaluation:
                     "test_metrics_usage": "reporting_only",
                     "lineage": candidate_lineage,
                 },
+                "source_manifest": candidate_lineage.get("source_manifest"),
                 "champion": champion_info,
                 "gates": gate_results,
                 "decision": {

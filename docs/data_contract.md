@@ -2,7 +2,7 @@
 
 **Contract version:** 1.0.0
 **Status:** Phase 1 benchmark contract; no company partner is currently onboarded
-**Model specification:** `configs/model_spec.yaml` version 2
+**Model specification:** `configs/model_spec.yaml` version 3
 **Last reviewed:** 2026-08-27
 
 ## 1. Purpose and scope
@@ -329,7 +329,7 @@ The current project has no company-specific production data source. The active d
 
 The MongoDB copy is the active ingestion source for the training pipeline. The repository copy at `notebooks/data.csv` is the local benchmark/reference copy and must not be assumed to be byte-for-byte identical to the MongoDB collection unless a comparison is performed.
 
-For every ingestion run, the pipeline must capture the actual MongoDB extraction timestamp, row count, schema version, and a reproducible snapshot or content hash. The current contract does not invent a MongoDB snapshot ID, data-as-of date, freshness status, or MongoDB content hash; these values are runtime metadata and remain unknown until the extraction process records them.
+For every ingestion run, the pipeline captures the actual MongoDB extraction timestamp, row count, schema version, and an immutable source manifest. The manifest records a MongoDB snapshot ID, snapshot-session read boundary, exact filter and projection, indexed ordering, database/collection namespace, ID range, and canonical/file SHA-256 hashes. The manifest is separate from model-bound columns and is propagated through ingestion, metrics, evaluation, MLflow lineage, and future release metadata. See [MongoDB source provenance](mongodb_provenance.md).
 
 Partner-specific freshness, completeness, and onboarding validation rules remain inactive because no company is currently onboarded. They must be configured separately when a company source is introduced.
 
@@ -518,7 +518,7 @@ Example release lineage:
 ```yaml
 lineage:
   contract_version: "1.0.0"
-  model_spec_version: "2"
+  model_spec_version: "3"
   model_uri: "models:/m-3aacf46fc018452ab9aab96033eb7e56"
   git_commit: "<commit>"
   git_provenance:
@@ -532,5 +532,16 @@ lineage:
     schema_sha256: "<sha256>"
   dependency_lock_hash: "<sha256>"
   dataset_snapshot_id: "<snapshot>"
-  dataset_hash: "<sha256>"
+  dataset_content_hash: "<sha256>"
+  source_manifest:
+    manifest_version: "1.0.0"
+    snapshot_id: "mongodb-sha256:<manifest-hash>"
+    immutable: true
+    source:
+      database: "INSURANCE"
+      collection: "INSURANCE_DATA"
+      namespace: "INSURANCE.INSURANCE_DATA"
+    read_boundary:
+      mode: "snapshot_session"
+      read_concern: "snapshot"
 ```

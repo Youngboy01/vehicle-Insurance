@@ -42,6 +42,7 @@ class TrainingPipelineConfig:
 class DataIngestionConfig:
     data_ingestion_dir: str | None = None
     feature_store_file_path: str | None = None
+    source_manifest_file_path: str | None = None
     training_file_path: str | None = None
     validation_file_path: str | None = None
     testing_file_path: str | None = None
@@ -61,6 +62,10 @@ class DataIngestionConfig:
             self.data_ingestion_dir,
             DATA_INGESTION_FEATURE_STORE_DIR,
             FILE_NAME,
+        )
+        self.source_manifest_file_path = self.source_manifest_file_path or os.path.join(
+            os.path.dirname(self.feature_store_file_path),
+            "source_manifest.json",
         )
         self.training_file_path = self.training_file_path or os.path.join(
             self.data_ingestion_dir,

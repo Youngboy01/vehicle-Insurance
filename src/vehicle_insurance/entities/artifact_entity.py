@@ -7,6 +7,9 @@ class DataIngestionArtifact:
     trained_file_path: str
     validation_file_path: str
     test_file_path: str
+    feature_store_file_path: Optional[str] = None
+    source_manifest_file_path: Optional[str] = None
+    source_manifest: Optional[dict] = None
 
 
 @dataclass

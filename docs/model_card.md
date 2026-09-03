@@ -84,7 +84,7 @@ The target response is observed after the offer. It must never be used as an inp
 
 ### Data source
 
-The active benchmark source is the `data.csv` content loaded into MongoDB Atlas database `INSURANCE`, collection `INSURANCE_DATA`. `notebooks/data.csv` is a repository reference copy and is not authoritative for the MongoDB contents. The trainer records a deterministic SHA-256 content hash for each run; the latest corrected run recorded `3b60d1072851756367817fb155e6e755ffa79509daa806720719bc395dfbea7d`. The original dataset license and acquisition history still require formal provenance documentation.
+The active benchmark source is the `data.csv` content loaded into MongoDB Atlas database `INSURANCE`, collection `INSURANCE_DATA`. `notebooks/data.csv` is a repository reference copy and is not authoritative for the MongoDB contents. New runs persist an immutable `feature_store/data.csv` plus adjacent `source_manifest.json`, recording the MongoDB snapshot/read boundary, exact projection/filter, row count, ID range, and SHA-256 identity. The original dataset license and acquisition history still require formal provenance documentation.
 
 The benchmark should not be presented as proof of production performance. It is a historical/static dataset used to demonstrate the modeling and MLOps workflow.
 
@@ -119,7 +119,7 @@ The benchmark should not be presented as proof of production performance. It is 
 
 The verified benchmark training path contains these stages:
 
-1. Ingest the MongoDB collection into a unique per-run feature-store CSV and sort the materialized data by ascending `id`.
+1. Extract the MongoDB collection in a snapshot session with an explicit projection and ascending indexed `id` order, then persist an immutable per-run feature-store CSV plus source manifest.
 2. Create a stratified 80/10/10 train/validation/test split with `random_state=42`.
 3. Validate all three labeled splits against the versioned data contract.
 4. Fit preprocessing on training data only.
@@ -128,9 +128,10 @@ The verified benchmark training path contains these stages:
 7. Run repeated stratified stability evaluation with fold-local preprocessing.
 8. Refit the final preprocessing-plus-model pipeline on train plus validation.
 9. Evaluate the untouched test split once through the final pipeline.
-10. Persist and log metrics, artifacts, feature order, versions, hashes, and MLflow lineage.
-11. Evaluate release readiness using the validation-based policy; registry promotion is currently disabled.
-12. Replay evaluation against an existing candidate when reviewed lineage or parity evidence is added, without retraining.
+10. Persist and log metrics, artifacts, feature order, versions, hashes, source manifest, and MLflow lineage.
+11. Certify source-frozen parity against the historical reference and the immutable source snapshot.
+12. Evaluate release readiness using the validation-based policy; registry promotion is currently disabled.
+13. Replay evaluation against an existing candidate when reviewed lineage or parity evidence is added, without retraining.
 
 The frozen preprocessing uses:
 

@@ -48,6 +48,7 @@ from vehicle_insurance.utils import (
     resolve_repository_root,
     validate_git_provenance,
 )
+from vehicle_insurance.utils.source_manifest import validate_source_manifest
 
 logger = setup_logger()
 
@@ -144,6 +145,31 @@ class ModelTrainer:
                 "evaluation_policy.lineage.git must be a dictionary"
             )
 
+        source_snapshot = data_protocol.get("source_snapshot")
+        if not isinstance(source_snapshot, dict) or source_snapshot.get(
+            "required"
+        ) is not True:
+            raise ValueError("data_protocol.source_snapshot must be required")
+        source_lineage_policy = (
+            self.model_spec.get("evaluation_policy", {})
+            .get("lineage", {})
+            .get("source_snapshot")
+        )
+        if not isinstance(source_lineage_policy, dict) or any(
+            source_lineage_policy.get(field) is not True
+            for field in (
+                "require_manifest",
+                "require_immutable_snapshot",
+                "require_snapshot_read_boundary",
+                "require_explicit_projection",
+                "require_indexed_ordering",
+            )
+        ):
+            raise ValueError(
+                "evaluation_policy.lineage.source_snapshot must require all "
+                "source provenance controls"
+            )
+
     @staticmethod
     def _load_and_split_data(file_path: str) -> tuple[np.ndarray, np.ndarray]:
         try:
@@ -188,6 +214,20 @@ class ModelTrainer:
         )
         return hashlib.sha256(canonical_bytes).hexdigest()
 
+    def _source_manifest(self) -> dict:
+        manifest = getattr(self.data_ingestion_artifact, "source_manifest", None)
+        if not isinstance(manifest, dict):
+            manifest_path = getattr(
+                self.data_ingestion_artifact,
+                "source_manifest_file_path",
+                None,
+            )
+            if manifest_path and os.path.isfile(manifest_path):
+                with open(manifest_path, encoding="utf-8") as manifest_file:
+                    manifest = json.load(manifest_file)
+        validate_source_manifest(manifest)
+        return dict(manifest)
+
     def _build_lineage(
         self,
         train_df: pd.DataFrame,
@@ -195,6 +235,12 @@ class ModelTrainer:
         test_df: pd.DataFrame,
     ) -> dict:
         dataset_hash = self._dataset_hash(train_df, validation_df, test_df)
+        source_manifest = self._source_manifest()
+        if dataset_hash != source_manifest["content_hash"]:
+            raise ValueError(
+                "Reassembled raw split content does not match the immutable "
+                "MongoDB source snapshot manifest"
+            )
         return {
             "contract_version": str(self.schema_config["version"]),
             "model_spec_version": str(self.model_spec["version"]),
@@ -210,8 +256,9 @@ class ModelTrainer:
             "scikit_learn_version": self._package_version("scikit-learn"),
             "mlflow_version": self._package_version("mlflow"),
             "schema_version": str(self.schema_config["version"]),
-            "dataset_snapshot_id": f"sha256:{dataset_hash}",
-            "dataset_content_hash": dataset_hash,
+            "dataset_snapshot_id": source_manifest["snapshot_id"],
+            "dataset_content_hash": source_manifest["content_hash"],
+            "source_manifest": source_manifest,
             "split_protocol": self.model_spec["data_protocol"]["split_protocol"],
             "random_state": self.model_spec["data_protocol"]["random_state"],
             "source_tuning_run_id": self.model_spec["artifacts"][
@@ -684,6 +731,24 @@ class ModelTrainer:
                         "model_spec_version": lineage["model_spec_version"],
                         "split_protocol": lineage["split_protocol"],
                         "dataset_snapshot_id": lineage["dataset_snapshot_id"],
+                        "source_database": lineage["source_manifest"]["source"][
+                            "database"
+                        ],
+                        "source_collection": lineage["source_manifest"]["source"][
+                            "collection"
+                        ],
+                        "source_row_count": str(
+                            lineage["source_manifest"]["row_count"]
+                        ),
+                        "source_id_min": str(
+                            lineage["source_manifest"]["id_range"]["min"]
+                        ),
+                        "source_id_max": str(
+                            lineage["source_manifest"]["id_range"]["max"]
+                        ),
+                        "source_read_boundary": lineage["source_manifest"][
+                            "read_boundary"
+                        ]["mode"],
                         "candidate_fit_data": "train_only",
                         "final_fit_data": "train_plus_validation",
                         "candidate_transformed_feature_count": candidate_feature_count,
@@ -776,6 +841,10 @@ class ModelTrainer:
                     }
                 )
                 mlflow.log_dict(lineage, "lineage/lineage.json")
+                mlflow.log_dict(
+                    lineage["source_manifest"],
+                    "lineage/source_manifest.json",
+                )
 
             save_object(
                 self.model_trainer_config.trained_model_file_path,

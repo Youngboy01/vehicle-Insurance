@@ -92,3 +92,9 @@ source patch or retrofit unknown Git information.
 This policy is independent of Champion/Challenger behavior. The current phase
 continues to use candidate-only evaluation, with Champion comparison and
 promotion disabled.
+
+Source-data identity is recorded alongside Git identity. New candidate lineage
+must include the immutable MongoDB `source_manifest` produced by ingestion;
+pre-manifest artifacts remain historical evidence and are not retrofitted.
+See [MongoDB source provenance](mongodb_provenance.md) for the manifest and
+retry contract.

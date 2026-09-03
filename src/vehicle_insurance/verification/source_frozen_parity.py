@@ -45,6 +45,7 @@ from vehicle_insurance.constants import (
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
 from vehicle_insurance.utils import load_object, read_yaml_file
+from vehicle_insurance.utils.source_manifest import validate_source_manifest
 
 logger = setup_logger()
 
@@ -90,6 +91,9 @@ class SourceFrozenParityCertification:
             / "feature_store"
             / "data.csv"
         )
+        self.source_manifest_path = self.source_data_path.with_name(
+            "source_manifest.json"
+        )
         self.report_path = Path(report_path).resolve() if report_path else (
             self.candidate_artifact_dir
             / "source_frozen_parity"
@@ -111,6 +115,7 @@ class SourceFrozenParityCertification:
         self.checks: dict[str, dict[str, Any]] = {}
         self.candidate_metrics_payload: dict[str, Any] = {}
         self.candidate_lineage: dict[str, Any] = {}
+        self.source_manifest: dict[str, Any] = {}
         self.candidate_splits: dict[str, pd.DataFrame] = {}
         self.reference_splits: dict[str, dict[str, list[Any]]] = {}
         self.candidate_model: Any = None
@@ -280,6 +285,7 @@ class SourceFrozenParityCertification:
             "test_split": ingestion_dir / "ingested" / "test.csv",
             "candidate_model": trainer_dir / "model.pkl",
             "candidate_metrics": trainer_dir / "metrics.json",
+            "source_manifest": self.source_manifest_path,
         }
         missing_paths = {
             name: str(path)
@@ -323,6 +329,12 @@ class SourceFrozenParityCertification:
             raise ValueError("Candidate metrics.json does not contain lineage")
         self.candidate_lineage = lineage
 
+        with required_paths["source_manifest"].open(encoding="utf-8") as file:
+            source_manifest = json.load(file)
+        if not isinstance(source_manifest, dict):
+            raise ValueError("Candidate source_manifest.json must contain a JSON object")
+        self.source_manifest = source_manifest
+
         self.candidate_model = load_object(str(required_paths["candidate_model"]))
         if not hasattr(self.candidate_model, "predict_proba"):
             raise TypeError("Candidate model does not expose predict_proba")
@@ -356,6 +368,17 @@ class SourceFrozenParityCertification:
         source_ids = self._id_sequence(source_dataframe)
         if len(source_ids) != len(set(source_ids)):
             raise ValueError("Source snapshot contains duplicate IDs")
+        validate_source_manifest(self.source_manifest, source_dataframe)
+        lineage_manifest = self.candidate_lineage.get("source_manifest")
+        if not isinstance(lineage_manifest, dict):
+            raise ValueError("Candidate lineage does not contain source manifest")
+        if lineage_manifest.get("snapshot_id") != self.source_manifest.get(
+            "snapshot_id"
+        ):
+            raise ValueError(
+                "Candidate lineage source snapshot ID does not match the source "
+                "manifest beside the feature-store CSV"
+            )
 
         candidate_hash = self._dataset_hash(list(self.candidate_splits.values()))
         source_hash = self._dataset_hash([source_dataframe])
@@ -418,7 +441,15 @@ class SourceFrozenParityCertification:
         self.checks["reference_split_source"] = {
             "passed": True,
             "method": "exact_notebook_cell_24_split_sequence",
-            "source_manifest_available": False,
+            "source_manifest_available": True,
+            "source_manifest_path": str(
+                getattr(
+                    self,
+                    "source_manifest_path",
+                    self.source_data_path.with_name("source_manifest.json"),
+                )
+            ),
+            "source_snapshot_id": self.source_manifest["snapshot_id"],
             "source_data_path": str(self.source_data_path),
             "random_state": self.random_state,
             "split_protocol": "stratified_80_10_10",
@@ -857,6 +888,15 @@ class SourceFrozenParityCertification:
             "reference_run_id": self.reference_run_id,
             "reference_model_uri": self.reference_model_uri,
             "source_data_path": str(self.source_data_path),
+            "source_manifest_path": str(
+                getattr(
+                    self,
+                    "source_manifest_path",
+                    self.source_data_path.with_name("source_manifest.json"),
+                )
+            ),
+            "source_manifest": self.candidate_lineage.get("source_manifest")
+            or getattr(self, "source_manifest", {}),
             "source_split_method": self.checks.get("reference_split_source"),
             "tolerances": {
                 "prediction_max_absolute_error": self.prediction_tolerance,
