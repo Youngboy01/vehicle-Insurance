@@ -7,14 +7,14 @@
 | Model name | `Vehicle_Insurance_LGBM` |
 | Model type | LightGBM binary classifier |
 | Historical final reference | MLflow run `dc28826afdcc4e5cbce068db62439094` |
-| Latest trainer candidate | MLflow run `41960b9ee2024a1fba0bfed06d1e8b88`; model `m-61b436de1fd5450c88f805c7b29df262` |
+| Latest trainer candidate | MLflow run `0a5a3eb264464111ad86075bd811531d`; model `m-e339c348e27d400d835b8e8bdf8fdbe1` (candidate-only; not registered or served automatically) |
 | Task | Binary response-propensity classification |
 | Positive class | `Response = 1` |
 | Decision unit | One customer-campaign opportunity |
 | Intended user | Marketing or campaign-operations team |
 | Serving interface | FastAPI `/predict` endpoint |
 | Review status | Phase 1 benchmark candidate; not production-approved and not promoted |
-| Last reviewed | 2026-09-02 |
+| Last reviewed | 2026-09-03 |
 
 This model estimates whether a customer is likely to respond positively to a vehicle-insurance cross-sell offer. It is a marketing-prioritization model, not a claims, pricing, underwriting, fraud, or eligibility model.
 
@@ -22,7 +22,7 @@ This model estimates whether a customer is likely to respond positively to a veh
 
 The broader Phase 1 system is a top-K vehicle-insurance cross-sell decision-support platform. Given customer information available before a marketing campaign, the system should estimate response propensity, rank customers, and support selecting the highest-scoring customers at a company-selected campaign capacity.
 
-The current deployed API performs single-customer inference. Batch ranking, top-K selection, and selection-quality evaluation are planned Phase 1 capabilities built on top of the response score; they should not be described as already implemented by the current `/predict` endpoint. Budget-based selection, outreach-cost assumptions, conversion-value assumptions, and ROI calculations are later extensions.
+The current API implementation supports single-customer inference. Batch ranking, top-K selection, and selection-quality evaluation are planned Phase 1 capabilities built on top of the response score; they should not be described as already implemented by the current `/predict` endpoint. Budget-based selection, outreach-cost assumptions, conversion-value assumptions, and ROI calculations are later extensions.
 
 ## 3. Intended use
 
@@ -143,7 +143,7 @@ The frozen training model uses `LGBMClassifier` with `scale_pos_weight=7.1590398
 
 ## 8. Evaluation evidence
 
-The latest corrected benchmark run completed on `2026-08-30` using `381109` MongoDB records and the frozen stratified 80/10/10 protocol. The final model was refit on train plus validation, and the untouched test split was evaluated exactly once.
+The latest verified candidate run completed on `2026-09-03` using `381109` MongoDB records and the frozen stratified 80/10/10 protocol. The final model was refit on train plus validation, and the untouched test split was evaluated exactly once.
 
 | Metric | Validation candidate | Final test report |
 |---|---:|---:|

@@ -3,7 +3,7 @@
 **Contract version:** 1.0.0
 **Status:** Phase 1 benchmark contract; no company partner is currently onboarded
 **Model specification:** `configs/model_spec.yaml` version 3
-**Last reviewed:** 2026-08-27
+**Last reviewed:** 2026-09-03
 
 ## 1. Purpose and scope
 
@@ -360,7 +360,7 @@ A company may provide an equivalent feature instead of a canonical field only wi
   approved_by: "Project/data-contract owner"
   approval_date: "YYYY-MM-DD"
   mapping_version: "1.0"
-  validation_fixture: "tests/fixtures/company_age_mapping.csv"
+  validation_fixture: "<approved-validation-fixture-path>"
   leakage_review: "confirmed no post-campaign information"
 ```
 

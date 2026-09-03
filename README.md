@@ -214,7 +214,7 @@ Base URL: `http://localhost:8080`
 | `GET`  | `/health`   | Returns service health, loaded model metadata, and load time |
 | `POST` | `/predict`  | Runs inference on a single customer record |
 | `POST` | `/train`    | Kicks off the training pipeline as a background task (locked — rejects if training is already running) |
-| `POST` | `/reload`   | Hot-swaps the in-memory model with the latest registered MLflow champion, no restart required (requires `X-Reload-Token` header) |
+| `POST` | `/reload`   | Hot-swaps the in-memory model with the registered MLflow Champion; it requires a registered Champion and the `X-Reload-Token` header |
 
 **Example `/predict` request:**
 ```json
@@ -294,7 +294,7 @@ A verified parity certificate is also logged to the same candidate MLflow run
 as `lineage/source_frozen_parity.json` with verification tags; failure to
 record that evidence blocks release qualification.
 
-Run this command from the repository root. The public module entry point executes ingestion, validation, transformation, model training, source-frozen parity, and final evaluation in sequence. It saves raw data, splits, transformed arrays, preprocessor, trained model, metrics, parity certificate, evaluation report, and lineage under a unique `artifact\<run-directory>` directory. Promotion remains disabled until the evaluation policy, source-frozen parity, segment review, and owner approval gates are complete. The private `tests\run_real_training.py` helper remains available for stage-level benchmark runs when evaluation is not required.
+Run this command from the repository root. The public module entry point executes ingestion, validation, transformation, model training, source-frozen parity, and final evaluation in sequence. It saves raw data, splits, transformed arrays, preprocessor, trained model, metrics, parity certificate, evaluation report, and lineage under a unique `artifact\<run-directory>` directory. Promotion remains disabled until the evaluation policy, source-frozen parity, segment review, and owner approval gates are complete. Stage-level benchmark helpers, if used during local development, are not part of the public release workflow.
 
 ### Replaying Existing-candidate Evaluation
 
@@ -336,7 +336,7 @@ Then visit:
 - `http://localhost:8080` — dashboard UI
 - `http://localhost:8080/docs` — Swagger UI
 
-> Note: the API loads the current registered **champion** model from MLflow at startup, so a model must already be registered before the API can serve predictions. The current trainer candidate is not registered while promotion is disabled.
+> Current API limitation: the API loads the registered **Champion** model from MLflow at startup and on `/reload`, so a registered Champion must exist before it can serve predictions. The latest candidate-only training run is not registered or served automatically while promotion is disabled. API corrections will replace this alias dependency with the intended current self-contained candidate serving contract.
 
 ---
 
