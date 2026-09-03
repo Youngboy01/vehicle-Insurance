@@ -288,6 +288,7 @@ class TrainingPipeline:
             certification = SourceFrozenParityCertification(
                 candidate_artifact_dir=candidate_artifact_dir,
                 apply_lineage=True,
+                log_mlflow_evidence=True,
             )
             report = certification.run()
             report["report_path"] = str(certification.report_path)

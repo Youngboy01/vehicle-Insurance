@@ -290,6 +290,10 @@ RELOAD_TOKEN=<any secret string — protects the /reload endpoint>
 uv run python -m vehicle_insurance.pipeline.training_pipeline
 ```
 
+A verified parity certificate is also logged to the same candidate MLflow run
+as `lineage/source_frozen_parity.json` with verification tags; failure to
+record that evidence blocks release qualification.
+
 Run this command from the repository root. The public module entry point executes ingestion, validation, transformation, model training, source-frozen parity, and final evaluation in sequence. It saves raw data, splits, transformed arrays, preprocessor, trained model, metrics, parity certificate, evaluation report, and lineage under a unique `artifact\<run-directory>` directory. Promotion remains disabled until the evaluation policy, source-frozen parity, segment review, and owner approval gates are complete. The private `tests\run_real_training.py` helper remains available for stage-level benchmark runs when evaluation is not required.
 
 ### Replaying Existing-candidate Evaluation

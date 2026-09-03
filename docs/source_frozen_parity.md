@@ -76,9 +76,9 @@ return `status: "verified"` before evidence is applied.
 
 ## Apply successful evidence manually
 
-The normal training pipeline applies verified evidence automatically. For a
-standalone audit, inspect the report first and then rerun with explicit lineage
-recording:
+The normal training pipeline applies verified evidence automatically and logs
+the final certificate to the same candidate MLflow run. For a standalone
+audit, inspect the report first and then rerun with explicit lineage recording:
 
 ```cmd
 uv run python -m vehicle_insurance.verification.source_frozen_parity --candidate-artifact-dir "%CANDIDATE_ARTIFACT_DIR%" --apply-lineage --log-mlflow-evidence
@@ -88,6 +88,12 @@ uv run python -m vehicle_insurance.verification.source_frozen_parity --candidate
 `model_trainer\metrics.json` lineage. `--log-mlflow-evidence` additionally
 logs `lineage/source_frozen_parity.json` and verification tags to that
 candidate's existing MLflow run. No model registry alias is changed.
+
+The formal pipeline supplies both options automatically. If MLflow evidence
+logging fails, the parity stage is recorded as
+`verified_but_lineage_recording_failed` and the candidate is not release
+qualified; inspect the parity report errors instead of treating local lineage
+alone as complete evidence.
 
 ## Replay evaluation after certification
 

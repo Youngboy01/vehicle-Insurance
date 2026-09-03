@@ -20,6 +20,7 @@ not persist a split-ID manifest. The report explicitly records this source.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -972,8 +973,14 @@ class SourceFrozenParityCertification:
         if not tracking_uri:
             raise ValueError("MLFLOW_TRACKING_URI is not set for evidence logging")
         mlflow.set_tracking_uri(tracking_uri)
+
+        # The status is part of the persisted certificate. Prepare the exact
+        # payload that will be logged before opening the MLflow run, while
+        # keeping the caller's report false until the operation succeeds.
+        mlflow_report = deepcopy(report)
+        mlflow_report["lineage_recording"]["mlflow_evidence_logged"] = True
         with mlflow.start_run(run_id=candidate_run_id):
-            mlflow.log_dict(report, "lineage/source_frozen_parity.json")
+            mlflow.log_dict(mlflow_report, "lineage/source_frozen_parity.json")
             mlflow.set_tag("source_frozen_parity", "verified")
             mlflow.set_tag("source_frozen_parity_certificate_version", "1.0.0")
         report["lineage_recording"]["mlflow_evidence_logged"] = True
