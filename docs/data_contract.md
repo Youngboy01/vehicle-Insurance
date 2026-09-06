@@ -3,7 +3,7 @@
 **Contract version:** 1.0.0
 **Status:** Phase 1 benchmark contract; no company partner is currently onboarded
 **Model specification:** `configs/model_spec.yaml` version 3
-**Last reviewed:** 2026-09-03
+**Last reviewed:** 2026-09-05
 
 ## 1. Purpose and scope
 
@@ -55,7 +55,7 @@ Annual_Premium, Policy_Sales_Channel, Vintage
 
 Training data is historical labeled data. It contains the customer identifier, the ten canonical features, and the observed `Response` outcome. It is used for preprocessing fitting, model training, validation, and the one-time final test evaluation defined by the model specification.
 
-Scoring data is unlabeled data available before a campaign decision. It contains the customer identifier and the same ten canonical features, but never contains `Response`. It is passed through the already-fitted production artifact and is used to produce scores and campaign rankings. No model or preprocessor fitting occurs during scoring.
+Scoring data is unlabeled data available before a campaign decision. It contains the customer identifier and the same ten canonical features, but never contains `Response`. It is passed as raw canonical features to the immutable, self-contained preprocessing-plus-model serving artifact and is used to produce scores and campaign rankings. No model or preprocessor fitting occurs during scoring, and no detached local preprocessor is required by the API.
 
 The same feature definitions, units, category meanings, and timing requirements apply to both data types. The only model-bound field that differs is `Response`.
 
@@ -427,6 +427,8 @@ score_semantics:
   meaning: "Estimated positive-class response-propensity score used for ranking"
   calibrated_probability: false
   calibration_status: "not_evaluated"
+  campaign_capacity_rule: "descending_score_top_k"
+  operating_threshold: "optional_diagnostic_only"
 ```
 
 The current API may retain the compatibility field name `probability`, but user-facing documentation should prefer `response_propensity_score` and must explain the uncalibrated score semantics.
@@ -476,6 +478,8 @@ Standard error codes include:
 | `FEATURE_MAPPING_REQUIRED` | Required company field has no approved canonical mapping |
 | `TRAINING_SCHEMA_INVALID` | Invalid labeled training data |
 | `PROVENANCE_METADATA_INVALID` | Required snapshot or provenance metadata is missing or invalid |
+
+Serving operations use the same envelope for operational failures. `MODEL_NOT_READY` means the process is live but no load attempt has established a model; `MODEL_LOAD_FAILED` means startup could not validate the configured candidate; `MODEL_RELOAD_FAILED` means a controlled reload could not validate it; `DEPENDENCY_UNAVAILABLE` means a temporary MLflow/model-store dependency failed; `MODEL_INFERENCE_FAILED` means the loaded model could not score the request; and `INTERNAL_ERROR` means an unexpected application failure. Operational failures use an empty `fields` list and never expose stack traces or customer data.
 
 Additional actionable messages should cover invalid categories, binary values, numeric ranges, nulls, NaN/infinity, duplicate IDs, empty batches, and unmapped company fields. The message must identify what failed and what the provider must correct.
 

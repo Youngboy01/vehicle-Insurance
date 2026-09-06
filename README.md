@@ -51,7 +51,7 @@ This project is a **top-K vehicle-insurance cross-sell decision-support platform
 
 The decision unit is **one customer-campaign opportunity**. The intended user is a marketing or campaign-operations team deciding which customers to prioritize for outreach.
 
-The current API performs single-customer inference. Batch ranking, top-K selection, and selection-quality evaluation are Phase 1 extensions built on top of the response score; they are not yet claimed to be implemented by the current `/predict` endpoint. Budget-based selection, outreach-cost assumptions, conversion-value assumptions, and ROI calculations are later extensions.
+The API provides single-customer scoring through `/predict` and deterministic batch ranking/top-K selection through `/rank`. Selection-quality evaluation remains an offline model-evaluation concern. Budget-based selection, outreach-cost assumptions, conversion-value assumptions, and ROI calculations are later extensions.
 
 ### Target meaning
 
@@ -98,12 +98,12 @@ The model card is a living document and must be updated whenever the model, data
                     │   MLflow Tracking       │  (tracked on DagsHub)
                     │   Candidate lineage     │
                     └────────────┬─────────────┘
-                                 │ registry serving integration pending
+                                 │ immutable candidate serving configured
                                  ▼
                     ┌───────────────────────┐
                     │      FastAPI Service    │
-                    │  /predict  /train        │
-                    │  /health   /reload        │
+                    │  /predict  /rank         │
+                    │  /health   /reload       │
                     └────────────┬─────────────┘
                                  │
                                  ▼
@@ -191,7 +191,7 @@ Builds a `ColumnTransformer` driven by `configs/schema.yaml`:
 - passthrough for `Age`, `Annual_Premium`, `Vintage`, `Driving_License`, and `Previously_Insured`;
 - no numeric scaling.
 
-The transformer is fit on training data only, applied to validation and test data without refitting, and persisted as `preprocessor.pkl`. The verified benchmark produces `219` train-only transformed features; the final train-plus-validation refit produces `220` features because a valid category is observed during final fitting.
+The transformer is fit on training data only, applied to validation and test data without refitting, and persisted as an intermediate training artifact (`preprocessor.pkl`). Serving does not download or apply that detached artifact: the final MLflow model contains its own fitted preprocessor. The verified benchmark produces `219` train-only transformed features; the final train-plus-validation refit produces `220` features because a valid category is observed during final fitting.
 
 ### 4. Model Training
 Loads the frozen LightGBM parameters and `scale_pos_weight` from `configs/model_spec.yaml`. The trainer first fits a train-only candidate for validation and repeated stability analysis, then clones and refits the preprocessing/model pipeline on train plus validation. The untouched test split is evaluated once through that final pipeline. Metrics, feature order, model URI, data hash, Git/dependency versions, and MLflow lineage are persisted locally and logged to MLflow.
@@ -211,14 +211,19 @@ Base URL: `http://localhost:8080`
 | Method | Endpoint    | Description |
 |--------|-------------|-------------|
 | `GET`  | `/`         | Serves the prediction dashboard UI |
-| `GET`  | `/health`   | Returns service health, loaded model metadata, and load time |
+| `GET`  | `/health`   | Backward-compatible aggregate health/readiness response |
+| `GET`  | `/health/live` | Process liveness; does not depend on MLflow or model state |
+| `GET`  | `/health/ready` | Model readiness and immutable model/evaluation metadata; returns `503` until a validated model is loaded |
 | `POST` | `/predict`  | Runs inference on a single customer record |
-| `POST` | `/train`    | Kicks off the training pipeline as a background task (locked — rejects if training is already running) |
-| `POST` | `/reload`   | Hot-swaps the in-memory model with the registered MLflow Champion; it requires a registered Champion and the `X-Reload-Token` header |
+| `POST` | `/rank`     | Scores a batch and returns the highest-scoring top-K campaign customers |
+| `POST` | `/reload`   | Hot-swaps the in-memory model with the configured immutable MLflow candidate; it requires the `X-Reload-Token` header |
+
+Training is intentionally not exposed through the public FastAPI service. A future CI/CD workflow or dedicated training job will invoke `python -m vehicle_insurance.pipeline.training_pipeline` outside the web process, publish an evaluated candidate, and use the controlled release/reload path when approved.
 
 **Example `/predict` request:**
 ```json
 {
+  "id": 38113,
   "Age": 35,
   "Gender": "Male",
   "Driving_License": 1,
@@ -235,17 +240,50 @@ Base URL: `http://localhost:8080`
 **Example `/predict` response:**
 ```json
 {
-  "prediction": 1,
   "response_propensity_score": 0.8421,
   "probability": 0.8421,
-  "model_version": "reference-or-registered-version",
-  "api_timestamp": "2026-07-08T10:15:00"
+  "prediction": null,
+  "operating_threshold": null,
+  "model_version": "m-e339c348e27d400d835b8e8bdf8fdbe1",
+  "api_timestamp": "2026-07-08T10:15:00+00:00"
 }
 ```
 
-In the response, `prediction = 1` means that the model classifies the customer as likely to respond positively to the cross-sell offer; `prediction = 0` means that the model classifies the customer as unlikely to respond positively. The canonical semantic field is `response_propensity_score`. The compatibility field `probability` may remain temporarily, but it carries the same uncalibrated response-propensity score and must not be interpreted as a guaranteed probability.
+The canonical output is the double-valued `response_propensity_score`, which is used to rank customers. The compatibility field `probability` carries the same uncalibrated score and must not be interpreted as a guaranteed probability. `prediction` is `null` by default because the current configuration does not enable an operating threshold; if a threshold is explicitly enabled, it is a diagnostic binary result and not the campaign-selection rule. Campaign capacity is controlled by ranking and selecting the highest-scoring top-K customers. All API, model-load, and reload timestamps are timezone-aware ISO-8601 UTC values with an explicit `+00:00` offset.
+
+Readiness metadata includes the immutable model ID, model URI, MLflow source run ID, model-spec/contract versions, Git commit, dataset snapshot ID, validation metrics, and report-only test metrics. Primary selection metrics are Precision@10% and Lift@10%; missing legacy metrics are reported as unavailable and do not cause a `KeyError` during model loading.
 
 The returned score is intended for marketing prioritization. It is not a claim probability, underwriting score, price recommendation, eligibility decision, or causal estimate of whether contacting the customer will create an incremental response.
+
+Before either endpoint calls the model, the API applies the shared scoring contract in `configs/schema.yaml`: required identifiers and fields, domain/range checks, finite numeric values, allowed categories, forbidden outcome fields, exact columns, and batch ID uniqueness.
+
+All API failures use the stable JSON envelope `{"error_code": "...", "message": "...", "fields": []}`. Malformed scoring requests use `SCORING_SCHEMA_INVALID`, invalid domain values use `SCORING_VALUE_INVALID`, an unavailable serving model uses `MODEL_NOT_READY`, a failed candidate load uses `MODEL_LOAD_FAILED` or `MODEL_RELOAD_FAILED`, model execution uses `MODEL_INFERENCE_FAILED`, an unavailable MLflow/model-store dependency uses `DEPENDENCY_UNAVAILABLE`, and unexpected application failures use `INTERNAL_ERROR`. Messages are safe for clients and never contain stack traces, credentials, or customer attributes.
+
+**Example `/rank` request:**
+```json
+{
+  "records": [
+    {
+      "id": 38113,
+      "Age": 35,
+      "Gender": "Male",
+      "Driving_License": 1,
+      "Region_Code": 28.0,
+      "Previously_Insured": 0,
+      "Vehicle_Age": "1-2 Year",
+      "Vehicle_Damage": "Yes",
+      "Annual_Premium": 25000.0,
+      "Policy_Sales_Channel": 1.0,
+      "Vintage": 5
+    }
+  ],
+  "top_k_percentage": 10
+}
+```
+
+`/rank` accepts either `top_k_percentage` or `top_k_count` (not both). If omitted, it uses the versioned `selection.top_k_percentage` from `configs/model_spec.yaml`, applies floor conversion, and breaks score ties by ascending `id`. The optional operating threshold is never used to choose the campaign audience.
+
+The dashboard includes both single-customer scoring and a batch-ranking panel. The ranking panel accepts a JSON array, lets the operator choose percentage or fixed-count capacity, shows selected count and cutoff score, and displays the immutable model ID, model URI, and source run used for the result. The model-status card shows available validation Precision@10%, Lift@10%, and PR-AUC rather than foregrounding report-only test recall. API validation failures are rendered with their error code, safe message, and affected fields rather than as `[object Object]` or an opaque generic toast.
 
 Interactive Swagger docs are available at `/docs` once the server is running.
 
@@ -336,7 +374,7 @@ Then visit:
 - `http://localhost:8080` — dashboard UI
 - `http://localhost:8080/docs` — Swagger UI
 
-> Current API limitation: the API loads the registered **Champion** model from MLflow at startup and on `/reload`, so a registered Champion must exist before it can serve predictions. The latest candidate-only training run is not registered or served automatically while promotion is disabled. API corrections will replace this alias dependency with the intended current self-contained candidate serving contract.
+> Current serving contract: the API loads the immutable candidate model ID, URI, and run ID recorded in `configs/model_spec.yaml` at startup and on `/reload`. It loads one self-contained sklearn preprocessing-plus-LightGBM pipeline, validates raw inputs, and calls its public `predict_proba()` interface. A failed startup load leaves the process live but not ready; a failed reload leaves the previously served engine unchanged. Promotion remains disabled; no registry alias is consulted.
 
 ---
 
@@ -353,7 +391,7 @@ docker run -p 8080:8080 --env-file .env vehicle-insurance
 
 ## 🏆 Model Registry Workflow
 
-The current trainer logs a new candidate model and complete lineage to MLflow. The evaluation component consumes that candidate directly and applies validation top-K metrics, stability, source-frozen parity, immutable MongoDB snapshot provenance, and explicit acceptance thresholds. Promotion is currently disabled in `configs/model_spec.yaml`; no claim should be made that retraining or evaluation automatically updates the served champion. Existing candidates can be replay-evaluated with the documented utility, but artifacts created before the source-manifest contract are historical evidence rather than release-qualified models.
+The current trainer logs a new candidate model and complete lineage to MLflow. The evaluation component consumes that candidate directly and applies validation top-K metrics, stability, source-frozen parity, immutable MongoDB snapshot provenance, and explicit acceptance thresholds. Promotion is currently disabled in `configs/model_spec.yaml`; the API serves only the explicitly configured immutable candidate and retraining/evaluation do not automatically change that configuration. Existing candidates can be replay-evaluated with the documented utility, but artifacts created before the source-manifest contract are historical evidence rather than release-qualified models.
 
 ---
 

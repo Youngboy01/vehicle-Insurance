@@ -7,14 +7,14 @@
 | Model name | `Vehicle_Insurance_LGBM` |
 | Model type | LightGBM binary classifier |
 | Historical final reference | MLflow run `dc28826afdcc4e5cbce068db62439094` |
-| Latest trainer candidate | MLflow run `0a5a3eb264464111ad86075bd811531d`; model `m-e339c348e27d400d835b8e8bdf8fdbe1` (candidate-only; not registered or served automatically) |
+| Latest trainer candidate | MLflow run `0a5a3eb264464111ad86075bd811531d`; model `m-e339c348e27d400d835b8e8bdf8fdbe1` (candidate-only; explicitly configured for API serving, not registered or promoted) |
 | Task | Binary response-propensity classification |
 | Positive class | `Response = 1` |
 | Decision unit | One customer-campaign opportunity |
 | Intended user | Marketing or campaign-operations team |
-| Serving interface | FastAPI `/predict` endpoint |
+| Serving interface | FastAPI `/predict` and `/rank` endpoints |
 | Review status | Phase 1 benchmark candidate; not production-approved and not promoted |
-| Last reviewed | 2026-09-03 |
+| Last reviewed | 2026-09-05 |
 
 This model estimates whether a customer is likely to respond positively to a vehicle-insurance cross-sell offer. It is a marketing-prioritization model, not a claims, pricing, underwriting, fraud, or eligibility model.
 
@@ -22,7 +22,7 @@ This model estimates whether a customer is likely to respond positively to a veh
 
 The broader Phase 1 system is a top-K vehicle-insurance cross-sell decision-support platform. Given customer information available before a marketing campaign, the system should estimate response propensity, rank customers, and support selecting the highest-scoring customers at a company-selected campaign capacity.
 
-The current API implementation supports single-customer inference. Batch ranking, top-K selection, and selection-quality evaluation are planned Phase 1 capabilities built on top of the response score; they should not be described as already implemented by the current `/predict` endpoint. Budget-based selection, outreach-cost assumptions, conversion-value assumptions, and ROI calculations are later extensions.
+The current API supports single-customer inference through `/predict` and deterministic batch ranking/top-K selection through `/rank`. Selection-quality evaluation remains an offline model-evaluation concern. Budget-based selection, outreach-cost assumptions, conversion-value assumptions, and ROI calculations are later extensions.
 
 ## 3. Intended use
 
@@ -63,12 +63,12 @@ The target column is `Response`:
 
 The model output is currently exposed as:
 
-- `prediction = 1`: the classifier predicts a positive response at its current decision rule;
-- `prediction = 0`: the classifier predicts no positive response at its current decision rule;
-- `response_propensity_score`: the canonical estimated positive-class response propensity score;
+- `response_propensity_score`: the canonical double-valued positive-class response-propensity score used for ranking;
 - `probability`: a temporary compatibility field carrying the same uncalibrated score;
-- `model_version`: the model or registered version used for inference;
-- `api_timestamp`: the time at which the API produced the response.
+- `prediction`: `null` unless an optional operating threshold is explicitly enabled; when enabled, this is a diagnostic binary result, not the campaign-selection rule;
+- `operating_threshold`: the configured diagnostic threshold, or `null` when disabled;
+- `model_version`: the immutable candidate model ID used for inference;
+- `api_timestamp`: a timezone-aware ISO-8601 UTC timestamp showing when the API produced the response.
 
 Neither score field should be interpreted as a guaranteed or perfectly calibrated probability until calibration has been evaluated and documented.
 
@@ -139,7 +139,7 @@ The frozen preprocessing uses:
 - passthrough behavior for `Age`, `Annual_Premium`, `Vintage`, `Driving_License`, and `Previously_Insured`;
 - no numeric scaling.
 
-The frozen training model uses `LGBMClassifier` with `scale_pos_weight=7.159039820166988` and hyperparameters loaded from `configs/model_spec.yaml`. The candidate transformation width is `219`; the final train-plus-validation pipeline width is `220`. The saved model is a self-contained preprocessing-plus-LightGBM pipeline.
+The frozen training model uses `LGBMClassifier` with `scale_pos_weight=7.159039820166988` and hyperparameters loaded from `configs/model_spec.yaml`. The candidate transformation width is `219`; the final train-plus-validation pipeline width is `220`. The saved MLflow model is a self-contained preprocessing-plus-LightGBM pipeline. The API passes validated raw features directly to that pipeline and does not serve or download the detached training-only `preprocessor.pkl` artifact.
 
 ## 8. Evaluation evidence
 
@@ -189,7 +189,7 @@ The current model specification defines provisional numeric practical-improvemen
 
 ## 9. Operating point and campaign decisions
 
-The current serving path returns a single-customer class prediction and score. It does not yet rank a batch or select a top-K campaign list.
+The current serving path returns a single-customer response-propensity score and provides `/rank` for deterministic batch top-K selection.
 
 The current campaign operating point has not yet been validated using:
 
@@ -199,7 +199,7 @@ The current campaign operating point has not yet been validated using:
 
 For the current Phase 1, the intended rule is to rank customers by response propensity and select the highest-scoring K customers, where K may be a company-selected percentage or customer count. The initial evaluation should compare top 1%, 5%, 10%, and 20%, with top 10% as the initial illustrative operating point.
 
-Until this work is completed, the model should be treated as an experimental scoring component rather than a production campaign decision-maker.
+The campaign rule is top-K ranking by descending response-propensity score with ascending customer ID as the deterministic tie-break. An optional threshold is diagnostic only and must not replace capacity-based selection. The service remains an experimental component until the remaining production gates are complete.
 
 Budget-based selection, outreach-cost modeling, conversion-value modeling, expected profit, and ROI are intentionally deferred. They may be added later as a configurable business-optimization layer.
 
@@ -230,7 +230,7 @@ Important limitations include:
 5. The validation-based acceptance evaluator is implemented, but the provisional thresholds and production promotion workflow are not owner-approved.
 6. `Region_Code` and `Policy_Sales_Channel` may be categorical codes rather than continuous measurements.
 7. Data drift, novel categories, changed campaign behavior, and changed customer populations may reduce performance.
-8. The API currently scores one record at a time and does not yet implement complete campaign-budget selection.
+8. The API supports deterministic top-K selection but does not implement budget, cost, conversion-value, or ROI optimization.
 9. The current candidate is logged to MLflow but is not yet registered or promoted as a production Champion.
 10. Offline model metrics do not prove incremental business value.
 
@@ -278,7 +278,7 @@ The model card should be updated before a model is promoted to a materially diff
 
 - Keep the self-contained final pipeline as the serving artifact.
 - Align the orchestrated pipeline with the evaluation result and disabled-promotion policy.
-- Add tests, CI, input constraints, authentication, rate limiting, and readiness checks.
+- Add tests, CI, input constraints, authentication, rate limiting, and container-level liveness/readiness verification for the serving checks now exposed by the API.
 - Move training into a separate durable job or workflow.
 - Add monitoring, rollback, and complete model-version lineage.
 
