@@ -13,7 +13,7 @@
   <header>
     <div class="header-title">
       <h1>Vehicle Insurance · Cross-Sell Response</h1>
-      <p>Response Propensity Dashboard — LightGBM Champion</p>
+      <p>Response Propensity Dashboard — LightGBM Candidate</p>
     </div>
     <div class="status-pill">
       <span class="status-dot" id="statusDot"></span>
@@ -28,12 +28,24 @@
       <div class="card-label">Model Status</div>
       <div class="health-grid">
         <div class="health-item">
-          <label>Champion Version</label>
+          <label>Candidate Model ID</label>
           <div class="val" id="hVersion">—</div>
         </div>
         <div class="health-item">
-          <label>Offline Test Recall</label>
-          <div class="val" id="hRecall">—</div>
+          <label>Validation Precision@10%</label>
+          <div class="val" id="hPrecision">—</div>
+        </div>
+        <div class="health-item">
+          <label>Validation Lift@10%</label>
+          <div class="val" id="hLift">—</div>
+        </div>
+        <div class="health-item">
+          <label>Validation PR-AUC</label>
+          <div class="val" id="hPrAuc">—</div>
+        </div>
+        <div class="health-item" style="grid-column: 1 / -1;">
+          <label>Source Run ID</label>
+          <div class="val muted" id="hRun">—</div>
         </div>
         <div class="health-item" style="grid-column: 1 / -1;">
           <label>Loaded At</label>
@@ -42,26 +54,16 @@
       </div>
     </div>
 
-    <!-- ── OPS CARD ── -->
-    <div class="card card-ops">
-      <div class="card-label">Pipeline Control</div>
-      <p style="font-size:0.82rem; color:var(--muted); margin-bottom:20px; line-height:1.7;">
-        Trigger a full retraining run. The pipeline fetches fresh data from MongoDB,
-        trains the response-propensity model, and promotes a new champion when the
-        current evaluation gate is passed.
-      </p>
-      <button class="btn btn-warn" id="trainBtn" onclick="triggerTrain()">
-        <span class="spinner"></span>
-        <span class="btn-text">Run Training Pipeline</span>
-      </button>
-      <div class="train-status" id="trainStatus"></div>
-    </div>
-
     <!-- ── PREDICT CARD ── -->
     <div class="card card-predict">
       <div class="card-label">Estimate — Cross-Sell Response</div>
 
       <div class="form-grid">
+
+        <div class="field">
+          <label>Customer ID</label>
+          <input type="number" id="id" value="38113" min="1" step="1" />
+        </div>
 
         <div class="field">
           <label>Gender</label>
@@ -136,21 +138,119 @@
         <span class="btn-text">Estimate Response</span>
       </button>
 
+      <div class="api-error" id="predictError" role="alert" aria-live="polite" hidden></div>
+
       <!-- RESULT -->
       <div class="result-box" id="resultBox">
-        <div class="result-header">Cross-Sell Response Estimate</div>
+        <div class="result-header">Response Propensity Score</div>
         <div class="result-verdict" id="resultVerdict"></div>
         <div class="result-meta">
-          <span>Estimated Response Likelihood: <strong id="resultProb">—</strong></span>
-          <span>Model v<strong id="resultVersion">—</strong></span>
+          <span>Score: <strong id="resultScore">—</strong></span>
+          <span>Candidate <strong id="resultVersion">—</strong></span>
           <span id="resultTs"></span>
         </div>
         <p class="result-note">
-          Use this estimate to prioritize marketing outreach. It is not a claims,
-          pricing, underwriting, or eligibility decision.
+          This uncalibrated score is for campaign ranking and prioritization. It is
+          not a probability, claims, pricing, underwriting, or eligibility decision.
         </p>
       </div>
 
+    </div>
+
+    <!-- ── RANK CARD ── -->
+    <div class="card card-rank">
+      <div class="card-label">Campaign audience · batch top-K ranking</div>
+      <p class="card-help" id="batchHelp">
+        Paste a JSON array of pre-campaign customer records. The API scores every
+        record, ranks by response propensity, and returns only the selected capacity.
+        Ties are broken by ascending customer ID; customers outside K are lower
+        priority, not rejected.
+      </p>
+
+      <div class="field field-wide">
+        <label for="batchRecords">Customer records (JSON array)</label>
+        <textarea id="batchRecords" rows="9" aria-describedby="batchHelp">[
+  {
+    "id": 38113,
+    "Age": 35,
+    "Gender": "Male",
+    "Driving_License": 1,
+    "Region_Code": 28.0,
+    "Previously_Insured": 0,
+    "Vehicle_Age": "1-2 Year",
+    "Vehicle_Damage": "Yes",
+    "Annual_Premium": 25000.0,
+    "Policy_Sales_Channel": 1.0,
+    "Vintage": 5
+  },
+  {
+    "id": 38114,
+    "Age": 42,
+    "Gender": "Female",
+    "Driving_License": 1,
+    "Region_Code": 28.0,
+    "Previously_Insured": 1,
+    "Vehicle_Age": "> 2 Years",
+    "Vehicle_Damage": "No",
+    "Annual_Premium": 30000.0,
+    "Policy_Sales_Channel": 26.0,
+    "Vintage": 120
+  }
+]</textarea>
+      </div>
+
+      <div class="form-grid rank-controls">
+        <div class="field">
+          <label for="capacityMode">Capacity mode</label>
+          <select id="capacityMode">
+            <option value="percentage">Top-K percentage</option>
+            <option value="count" selected>Fixed customer count</option>
+          </select>
+        </div>
+        <div class="field" id="percentageField" hidden>
+          <label for="topKPercentage">Select percentage (%)</label>
+          <input type="number" id="topKPercentage" min="0" max="100" step="0.1" value="10" />
+        </div>
+        <div class="field" id="countField">
+          <label for="topKCount">Select customers (K)</label>
+          <input type="number" id="topKCount" min="0" step="1" value="1" />
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="rankBtn" onclick="runRank()">
+        <span class="spinner"></span>
+        <span class="btn-text">Rank campaign audience</span>
+      </button>
+
+      <div class="api-error" id="rankError" role="alert" aria-live="polite" hidden></div>
+
+      <div class="empty-state" id="rankEmpty" role="status">
+        Submit a batch to see the selected audience and campaign cutoff.
+      </div>
+
+      <div class="rank-results" id="rankResults" hidden>
+        <div class="result-meta rank-summary" aria-live="polite">
+          <span>Scored: <strong id="rankTotal">—</strong></span>
+          <span>Selected: <strong id="rankSelected">—</strong></span>
+          <span>Capacity: <strong id="rankCapacity">—</strong></span>
+          <span>Cutoff: <strong id="rankCutoff">—</strong></span>
+        </div>
+        <div class="lineage-box">
+          <div><span>Model ID</span><strong id="rankModelId">—</strong></div>
+          <div><span>Source run</span><strong id="rankRunId">—</strong></div>
+          <div><span>Model URI</span><strong id="rankModelUri">—</strong></div>
+        </div>
+        <div class="table-wrap" tabindex="0" aria-label="Selected campaign customers">
+          <table>
+            <caption>Selected customers in campaign rank order</caption>
+            <thead>
+              <tr><th scope="col">Rank</th><th scope="col">Customer ID</th><th scope="col">Response propensity score</th></tr>
+            </thead>
+            <tbody id="rankTableBody"></tbody>
+          </table>
+        </div>
+        <p class="result-note" id="rankWarning"></p>
+      </div>
     </div>
   </div>
 </div>
@@ -171,8 +271,66 @@
 
   function setLoading(btnId, on) {
     const btn = document.getElementById(btnId);
+    if (!btn) return;
     btn.disabled = on;
+    btn.setAttribute('aria-busy', on ? 'true' : 'false');
     btn.classList.toggle('loading', on);
+  }
+
+  async function readJSONResponse(res) {
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function normalizedApiError(data, fallback) {
+    const detail = data && data.detail;
+    const detailMessage = detail && typeof detail === 'object' ? detail.message : detail;
+    const message = data && typeof data.message === 'string'
+      ? data.message
+      : (typeof detailMessage === 'string' ? detailMessage : fallback);
+    const code = data && typeof data.error_code === 'string' ? data.error_code : '';
+    const fields = data && Array.isArray(data.fields)
+      ? data.fields.filter((field) => typeof field === 'string' && field.length > 0)
+      : [];
+    return { message, code, fields };
+  }
+
+  function showApiError(elementId, data, fallback) {
+    const container = document.getElementById(elementId);
+    if (!container) return normalizedApiError(data, fallback);
+    const error = normalizedApiError(data, fallback);
+    container.replaceChildren();
+
+    const heading = document.createElement('strong');
+    heading.textContent = error.code ? `${error.message} (${error.code})` : error.message;
+    container.appendChild(heading);
+
+    if (error.fields.length > 0) {
+      const intro = document.createElement('span');
+      intro.textContent = 'Affected fields:';
+      container.appendChild(intro);
+      const list = document.createElement('ul');
+      error.fields.forEach((field) => {
+        const item = document.createElement('li');
+        item.textContent = field;
+        list.appendChild(item);
+      });
+      container.appendChild(list);
+    }
+    container.hidden = false;
+    return error;
+  }
+
+  function clearApiError(elementId) {
+    const container = document.getElementById(elementId);
+    if (!container) return;
+    container.replaceChildren();
+    container.hidden = true;
   }
 
   // ── HEALTH POLL ────────────────────────────────────────────────────────
@@ -187,17 +345,35 @@
         dot.className  = 'status-dot online';
         txt.textContent = 'online';
         document.getElementById('hVersion').textContent = `v${data.model_version}`;
-        document.getElementById('hRecall').textContent  = (data.recall * 100).toFixed(2) + '%';
+        const metrics = data.validation_metrics || {};
+        const displayMetric = (value) => Number.isFinite(value)
+          ? Number(value).toFixed(4)
+          : 'Unavailable';
+        document.getElementById('hPrecision').textContent =
+          displayMetric(metrics.precision_at_10pct);
+        document.getElementById('hLift').textContent =
+          displayMetric(metrics.lift_at_10pct);
+        document.getElementById('hPrAuc').textContent =
+          displayMetric(metrics.pr_auc);
+        document.getElementById('hRun').textContent = data.source_run_id || 'Unavailable';
         document.getElementById('hLoaded').textContent  =
           new Date(data.loaded_at).toLocaleString();
       } else {
-        throw new Error(data.detail || 'unhealthy');
+        const error = normalizedApiError(data, 'The scoring service is not ready.');
+        dot.className = res.status === 503 ? 'status-dot pending' : 'status-dot error';
+        txt.textContent = res.status === 503 ? 'not ready' : 'offline';
+        throw new Error(error.message);
       }
     } catch (e) {
-      dot.className   = 'status-dot error';
-      txt.textContent = 'offline';
+      if (!dot.classList.contains('pending')) {
+        dot.className = 'status-dot error';
+        txt.textContent = 'offline';
+      }
       document.getElementById('hVersion').textContent = '—';
-      document.getElementById('hRecall').textContent  = '—';
+      document.getElementById('hPrecision').textContent = '—';
+      document.getElementById('hLift').textContent = '—';
+      document.getElementById('hPrAuc').textContent = '—';
+      document.getElementById('hRun').textContent = '—';
       document.getElementById('hLoaded').textContent  = '—';
     }
   }
@@ -208,9 +384,11 @@
   // ── PREDICT ────────────────────────────────────────────────────────────
 
   async function runPredict() {
+    clearApiError('predictError');
     setLoading('predictBtn', true);
 
     const payload = {
+      id:                   parseInt(document.getElementById('id').value),
       Gender:               document.getElementById('Gender').value,
       Age:                  parseInt(document.getElementById('Age').value),
       Driving_License:      parseInt(document.getElementById('Driving_License').value),
@@ -229,18 +407,27 @@
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(payload),
       });
-      const data = await res.json();
+      const data = await readJSONResponse(res);
 
-      if (!res.ok) throw new Error(data.detail || 'Prediction failed.');
+      if (!res.ok) {
+        const error = showApiError('predictError', data, 'Prediction could not be completed.');
+        showToast(error.message, true);
+        return;
+      }
 
       const box      = document.getElementById('resultBox');
       const verdict  = document.getElementById('resultVerdict');
-      const isInterested = data.prediction === 1;
+      const hasThresholdDecision = data.prediction !== null && data.prediction !== undefined;
 
-      verdict.textContent = isInterested ? '✦ Likely to Respond' : '✧ Less Likely to Respond';
-      verdict.className   = 'result-verdict ' + (isInterested ? 'yes' : 'no');
+      verdict.textContent = hasThresholdDecision
+        ? (data.prediction === 1 ? '✦ Threshold diagnostic: positive' : '✧ Threshold diagnostic: negative')
+        : 'Ranking score only — no operating threshold configured';
+      verdict.className = 'result-verdict ' + (hasThresholdDecision
+        ? (data.prediction === 1 ? 'yes' : 'no')
+        : 'neutral');
 
-      document.getElementById('resultProb').textContent    = (data.probability * 100).toFixed(2) + '%';
+      document.getElementById('resultScore').textContent =
+        Number(data.response_propensity_score).toFixed(4);
       document.getElementById('resultVersion').textContent = data.model_version;
       document.getElementById('resultTs').textContent      =
         new Date(data.api_timestamp).toLocaleTimeString();
@@ -248,44 +435,128 @@
       box.className = 'result-box visible';
 
     } catch (e) {
-      showToast(e.message, true);
+      const error = showApiError(
+        'predictError',
+        { error_code: 'SERVICE_UNAVAILABLE', message: e.message || 'The API could not be reached.' },
+        'The API could not be reached.',
+      );
+      showToast(error.message, true);
     } finally {
       setLoading('predictBtn', false);
     }
   }
 
-  // ── TRAIN ──────────────────────────────────────────────────────────────
+  function syncCapacityFields() {
+    const percentageMode = document.getElementById('capacityMode').value === 'percentage';
+    document.getElementById('percentageField').hidden = !percentageMode;
+    document.getElementById('countField').hidden = percentageMode;
+  }
 
-  async function triggerTrain() {
-    const statusEl = document.getElementById('trainStatus');
-    setLoading('trainBtn', true);
-    statusEl.className   = 'train-status running';
-    statusEl.textContent = '⟳ Pipeline running in background...';
+  function renderRankResults(data) {
+    const results = document.getElementById('rankResults');
+    const empty = document.getElementById('rankEmpty');
+    const body = document.getElementById('rankTableBody');
+    body.replaceChildren();
+    document.getElementById('rankTotal').textContent = data.total_scored;
+    document.getElementById('rankSelected').textContent = data.selected_count;
+    document.getElementById('rankCapacity').textContent = data.capacity_type === 'top_k_percentage'
+      ? `${data.capacity_value}%`
+      : `${data.capacity_value} customers`;
+    document.getElementById('rankCutoff').textContent = data.cutoff_score === null
+      ? 'None'
+      : Number(data.cutoff_score).toFixed(4);
+    document.getElementById('rankModelId').textContent = data.model_id || data.model_version || '—';
+    document.getElementById('rankRunId').textContent = data.source_run_id || '—';
+    document.getElementById('rankModelUri').textContent = data.model_uri || '—';
+    document.getElementById('rankWarning').textContent = data.capacity_warning ||
+      'Customers outside the selected capacity remain lower priority; they are not rejected.';
+
+    (data.selected_customers || []).forEach((customer) => {
+      const row = document.createElement('tr');
+      [customer.rank, customer.id, Number(customer.response_propensity_score).toFixed(4)]
+        .forEach((value) => {
+          const cell = document.createElement('td');
+          cell.textContent = value;
+          row.appendChild(cell);
+        });
+      body.appendChild(row);
+    });
+
+    results.hidden = false;
+    empty.hidden = data.selected_count > 0;
+    empty.textContent = data.selected_count > 0
+      ? ''
+      : 'No customers were selected at this capacity. Increase K or the percentage if an audience is required.';
+  }
+
+  async function runRank() {
+    clearApiError('rankError');
+    setLoading('rankBtn', true);
+
+    let records;
+    try {
+      records = JSON.parse(document.getElementById('batchRecords').value);
+      if (!Array.isArray(records) || records.length === 0) {
+        throw new Error('Provide a non-empty JSON array of customer records.');
+      }
+    } catch (e) {
+      const error = showApiError(
+        'rankError',
+        { error_code: 'CLIENT_JSON_INVALID', message: e.message },
+        'The batch JSON is invalid.',
+      );
+      showToast(error.message, true);
+      setLoading('rankBtn', false);
+      return;
+    }
+
+    const body = { records };
+    const percentageMode = document.getElementById('capacityMode').value === 'percentage';
+    const capacityId = percentageMode ? 'topKPercentage' : 'topKCount';
+    const capacity = Number(document.getElementById(capacityId).value);
+    if (!Number.isFinite(capacity)
+      || capacity < 0
+      || (percentageMode && capacity > 100)
+      || (!percentageMode && !Number.isInteger(capacity))) {
+      const error = showApiError(
+        'rankError',
+        { error_code: 'CLIENT_CAPACITY_INVALID', message: 'Enter a valid campaign capacity.' },
+        'Enter a valid campaign capacity.',
+      );
+      showToast(error.message, true);
+      setLoading('rankBtn', false);
+      return;
+    }
+    body[percentageMode ? 'top_k_percentage' : 'top_k_count'] = capacity;
 
     try {
-      const res  = await fetch('/train', { method: 'POST' });
-      const data = await res.json();
-
-      if (res.status === 409) {
-        statusEl.className   = 'train-status running';
-        statusEl.textContent = '⚠ Training already in progress.';
-        showToast('Training already running.', true);
+      const res = await fetch('/rank', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await readJSONResponse(res);
+      if (!res.ok) {
+        const error = showApiError('rankError', data, 'Ranking could not be completed.');
+        showToast(error.message, true);
         return;
       }
-      if (!res.ok) throw new Error(data.detail || 'Train trigger failed.');
-
-      statusEl.className   = 'train-status done';
-      statusEl.textContent = '✓ Pipeline accepted — running in background.';
-      showToast('Training pipeline started.');
-
+      renderRankResults(data);
     } catch (e) {
-      statusEl.className   = 'train-status err';
-      statusEl.textContent = '✗ ' + e.message;
-      showToast(e.message, true);
+      const error = showApiError(
+        'rankError',
+        { error_code: 'SERVICE_UNAVAILABLE', message: e.message || 'The API could not be reached.' },
+        'The API could not be reached.',
+      );
+      showToast(error.message, true);
     } finally {
-      setLoading('trainBtn', false);
+      setLoading('rankBtn', false);
     }
   }
+
+  document.getElementById('capacityMode').addEventListener('change', syncCapacityFields);
+  syncCapacityFields();
+
 </script>
 </body>
 </html>
