@@ -75,6 +75,11 @@ selection:
   rule: highest_scoring_customers
   tie_break: ascending_id
   k_calculation: floor
+  operating_threshold:
+    enabled: false
+    value: null
+    status: not_configured
+    purpose: diagnostic_only_until_business_approval
 
 data_protocol:
   target_available_during_training: true
@@ -203,6 +208,10 @@ evaluation_policy:
 
 artifacts:
   mlflow_tracking:
+    # The immutable candidate below is the only model currently used by the API.
+    serving_candidate_run_id: 0a5a3eb264464111ad86075bd811531d
+    serving_candidate_model_id: m-e339c348e27d400d835b8e8bdf8fdbe1
+    serving_candidate_model_uri: models:/m-e339c348e27d400d835b8e8bdf8fdbe1
     # Historical parity-only references. These are never serving fallbacks,
     # active candidates, or current Champion/Challenger selections.
     source_tuning_run_id: e573ee5423434e6485404a96ca5f5731

@@ -786,21 +786,29 @@ class ModelTrainer:
                         }
                     )
 
+                signature_input = X_final_raw.head(3)
+                if list(final_pipeline.named_steps["model"].classes_) != [0, 1]:
+                    raise ValueError(
+                        "Final classifier must expose binary classes in [0, 1]"
+                    )
+                signature_output = pd.DataFrame(
+                    final_pipeline.predict_proba(signature_input),
+                    columns=[
+                        "non_response_score",
+                        "response_propensity_score",
+                    ],
+                    index=signature_input.index,
+                )
                 signature = mlflow.models.infer_signature(
-                    X_final_raw.head(3),
-                    pd.DataFrame(
-                        {
-                            "response_propensity_score": final_pipeline.predict_proba(
-                                X_final_raw.head(3)
-                            )[:, 1]
-                        }
-                    ),
+                    signature_input,
+                    signature_output,
                 )
                 model_info = mlflow.sklearn.log_model(
                     sk_model=final_pipeline,
                     name="model",
                     signature=signature,
-                    input_example=X_final_raw.head(3),
+                    input_example=signature_input,
+                    pyfunc_predict_fn="predict_proba",
                 )
                 mlflow.log_artifact(
                     MODEL_SPEC_FILE_PATH,
