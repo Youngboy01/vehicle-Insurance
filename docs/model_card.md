@@ -72,6 +72,8 @@ The model output is currently exposed as:
 
 Neither score field should be interpreted as a guaranteed or perfectly calibrated probability until calibration has been evaluated and documented.
 
+The dashboard presents this output as a response-propensity score for campaign prioritization. Its main page shows only whether the serving model is ready, then guides the user through either single-customer scoring or capacity-based audience ranking. Technical model lineage and evaluation metadata are intentionally kept in the API/readiness contract and documentation rather than displayed as a model-card panel in the primary campaign workflow. The interface does not present the score as a guaranteed likelihood, an approval, or a binary business verdict.
+
 ## 5. Prediction timing and decision unit
 
 The intended scoring moment is immediately before a marketing campaign or outreach decision. The model should use only information available at that time, such as customer demographics, vehicle information, policy information, and historical status fields.

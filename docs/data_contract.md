@@ -9,7 +9,7 @@
 
 This contract defines the data accepted by the vehicle-insurance cross-sell response-propensity platform.
 
-The platform ranks existing customers by their estimated likelihood of responding positively to a vehicle-insurance cross-sell offer. It supports marketing-campaign prioritization only. It is not an underwriting, pricing, claims, fraud, eligibility, approval, cancellation, or automatic adverse-decision system.
+The platform ranks existing customers by their estimated response propensity for a vehicle-insurance cross-sell offer. It supports marketing-campaign prioritization only. It is not an underwriting, pricing, claims, fraud, eligibility, approval, cancellation, or automatic adverse-decision system.
 
 The contract applies separately to:
 
@@ -432,6 +432,10 @@ score_semantics:
 ```
 
 The current API may retain the compatibility field name `probability`, but user-facing documentation should prefer `response_propensity_score` and must explain the uncalibrated score semantics.
+
+The user-facing dashboard should explain the score in the same terms: it is a value from 0 to 1 used to compare campaign priority, where a higher value indicates a stronger relative prioritization signal. It is not a promise that a customer will respond. Batch users choose a campaign capacity, and the service returns the highest-scoring records under the documented score-descending and ID-ascending ordering rule. Records outside that capacity are lower priority for that campaign, not rejected or ineligible.
+
+The dashboard's field guide uses the following plain-language mapping for scoring inputs: `id` is the source-system customer identifier; `Gender` is the recorded gender category; `Age` is current age in years; `Driving_License` and `Previously_Insured` are binary `1`/`0` values; `Region_Code` and `Policy_Sales_Channel` are numeric codes from the source system; `Vehicle_Age` is the documented age bracket; `Vehicle_Damage` is `Yes`/`No`; `Annual_Premium` is the positive annual premium in rupees; and `Vintage` is the number of days since the customer relationship or policy record began. Providers should use the source-system definitions and approved mappings rather than guessing from field names.
 
 Do not describe the score as a guaranteed probability, chance of purchase, certain response, approval, eligibility, or policy decision. If literal probability terminology is adopted later, calibration must be evaluated and versioned using validation data, including reliability curves, Brier score, expected calibration error, calibration slope/intercept, and segment calibration results.
 

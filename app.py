@@ -458,6 +458,19 @@ app.mount("/static", StaticFiles(directory=str(STATIC_PATH)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_PATH))
 
 
+def _stylesheet_url() -> str:
+    """Return a cache-busted stylesheet URL based on the file's current mtime."""
+
+    stylesheet_path = STATIC_PATH / "style.css"
+    try:
+        version = stylesheet_path.stat().st_mtime_ns
+    except OSError:
+        # Keep the page renderable if the asset is temporarily unavailable; the
+        # static-file request will still expose the underlying deployment issue.
+        version = "unavailable"
+    return f"/static/style.css?v={version}"
+
+
 def verify_reload_token(x_reload_token: str = Header(...)):
     expected = os.environ.get("RELOAD_TOKEN")
     if not expected:
@@ -683,7 +696,11 @@ class ReloadResponse(HealthResponse):
 @app.get("/", tags=["UI"])
 async def root(request: Request):
     """Serves the frontend UI."""
-    return templates.TemplateResponse(request=request, name="index.html")
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"stylesheet_url": _stylesheet_url()},
+    )
 
 
 class ScoringContractError(Exception):

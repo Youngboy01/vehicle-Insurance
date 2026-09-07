@@ -47,7 +47,7 @@ Rather than training a model once and calling it done, this project implements t
 
 ### Phase 1 project definition
 
-This project is a **top-K vehicle-insurance cross-sell decision-support platform**. Given customer information available before a marketing campaign, it estimates each customer's likelihood of responding positively to a vehicle-insurance cross-sell offer, ranks customers by that response propensity, and supports selecting the highest-scoring customers for outreach at a company-selected capacity.
+This project is a **top-K vehicle-insurance cross-sell decision-support platform**. Given customer information available before a marketing campaign, it estimates each customer's response propensity for a vehicle-insurance cross-sell offer, ranks customers by that score, and supports selecting the highest-scoring customers for outreach at a company-selected capacity.
 
 The decision unit is **one customer-campaign opportunity**. The intended user is a marketing or campaign-operations team deciding which customers to prioritize for outreach.
 
@@ -283,7 +283,27 @@ All API failures use the stable JSON envelope `{"error_code": "...", "message": 
 
 `/rank` accepts either `top_k_percentage` or `top_k_count` (not both). If omitted, it uses the versioned `selection.top_k_percentage` from `configs/model_spec.yaml`, applies floor conversion, and breaks score ties by ascending `id`. The optional operating threshold is never used to choose the campaign audience.
 
-The dashboard includes both single-customer scoring and a batch-ranking panel. The ranking panel accepts a JSON array, lets the operator choose percentage or fixed-count capacity, shows selected count and cutoff score, and displays the immutable model ID, model URI, and source run used for the result. The model-status card shows available validation Precision@10%, Lift@10%, and PR-AUC rather than foregrounding report-only test recall. API validation failures are rendered with their error code, safe message, and affected fields rather than as `[object Object]` or an opaque generic toast.
+The dashboard is intentionally task-focused rather than a model-card viewer. It shows a small readiness indicator, explains what a response-propensity score means, and provides two workflows: estimate one customer's score or prioritize a campaign audience. The single-customer workflow describes the score as a relative campaign-prioritization signal, not a guaranteed probability or business decision. The batch workflow explains capacity-based selection, deterministic tie-breaking, and the meaning of unselected customers. Its JSON input is kept inside an advanced expandable section and can be populated with sample records, so the main page is not dominated by raw implementation data. Results show scored count, selected count, capacity, cutoff score, and the selected customer ranking. API validation failures are rendered with their error code, safe message, and affected fields rather than as `[object Object]` or an opaque generic toast. Technical model lineage and evaluation metadata remain available through readiness/API documentation rather than competing with the primary user workflow.
+
+### Dashboard input guide
+
+For single-customer scoring, use the values from the customer's existing customer or policy record. The dashboard includes an expandable explanation beside the form; the same meanings apply to every record in a batch:
+
+| Field | What to enter |
+|---|---|
+| `id` | The unique customer identifier from the source system; it is used for traceability and deterministic tie-breaking, not as a model feature. |
+| `Gender` | The recorded value `Male` or `Female`. |
+| `Age` | Current customer age in years, from 18 through 100. |
+| `Driving_License` | `1` when the customer has a driving license, otherwise `0`. |
+| `Region_Code` | The numeric geographic region code from the source system; do not substitute a postal code without an approved mapping. |
+| `Previously_Insured` | `1` when the customer already has vehicle insurance, otherwise `0`. |
+| `Vehicle_Age` | One of the recorded vehicle-age brackets: `< 1 Year`, `1-2 Year`, or `> 2 Years`. |
+| `Vehicle_Damage` | `Yes` or `No` according to the recorded vehicle-damage status. |
+| `Annual_Premium` | The current positive annual premium amount in rupees. |
+| `Policy_Sales_Channel` | The numeric sales-channel code from the source system, not the channel name. |
+| `Vintage` | The number of days since the customer relationship or policy record began. |
+
+Do not send `Response`, conversion outcomes, campaign results, or any field created after the campaign. Those values would leak the outcome into the scoring request and are rejected by the data contract.
 
 Interactive Swagger docs are available at `/docs` once the server is running.
 
@@ -373,6 +393,8 @@ uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 Then visit:
 - `http://localhost:8080` — dashboard UI
 - `http://localhost:8080/docs` — Swagger UI
+
+During local development, the dashboard derives a cache-busting query value from the current `static/style.css` modification time. When the stylesheet changes, the rendered link changes automatically, so the browser fetches the new CSS without requiring `Ctrl+F5` or manual version editing.
 
 > Current serving contract: the API loads the immutable candidate model ID, URI, and run ID recorded in `configs/model_spec.yaml` at startup and on `/reload`. It loads one self-contained sklearn preprocessing-plus-LightGBM pipeline, validates raw inputs, and calls its public `predict_proba()` interface. A failed startup load leaves the process live but not ready; a failed reload leaves the previously served engine unchanged. Promotion remains disabled; no registry alias is consulted.
 
