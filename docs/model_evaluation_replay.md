@@ -78,7 +78,9 @@ The evaluator then applies the locked policy in the normal order:
 2. repeated-CV stability evidence;
 3. contract, model-spec, dataset, dependency, feature-order, and fit-scope
    lineage;
-4. source-frozen split/prediction parity evidence;
+4. source-frozen split/prediction parity evidence, including the persisted
+   completion state, recording mode, candidate/attempt identity, certificate
+   path and SHA-256 digest, and the referenced certificate's own identity;
 5. Champion comparison is skipped under the current candidate-only policy and
    remains reserved for the future workflow; and
 6. final-test metrics copied for reporting only.
@@ -100,6 +102,15 @@ retrofit a Git patch identity that was not captured during training.
 > historical evidence, but do not use it as a release-qualified model or
 > retrofit unknown Git information. The next fresh run will train the current
 > model again under a clean, traceable commit.
+
+For source-frozen parity, replay always reloads the durable lineage from
+`model_trainer/metrics.json`; an in-memory `verified` flag is not sufficient.
+It resolves the candidate-relative certificate path from the current artifact
+root, checks the certificate digest and exact candidate/certification-attempt
+identity, and requires `recording_state: "complete"`. The configured
+`required_recording_mode` is enforced: `local_only` evidence is rejected when
+the release policy requires `local_and_mlflow`, including when the remote
+artifact was logged but its tags were only partially recorded.
 
 ## When to run replay
 

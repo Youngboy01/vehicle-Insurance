@@ -157,6 +157,10 @@ evaluation_policy:
   parity:
     source_frozen_prediction_parity_required: true
     block_release_on_failure: true
+    # Release qualification requires both durable local evidence and the
+    # corresponding MLflow artifact/tags.  Standalone audits may select a
+    # local-only mode, but that evidence cannot satisfy this release policy.
+    required_recording_mode: local_and_mlflow
     required_evidence:
       - split_id_sets_match
       - prediction_order_match

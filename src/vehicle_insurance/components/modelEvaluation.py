@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from mlflow.exceptions import MlflowException
@@ -432,6 +434,13 @@ class ModelEvaluation:
         }
 
     def _check_source_frozen_parity(self, lineage: dict) -> dict:
+        if not isinstance(lineage, dict):
+            return {
+                "passed": False,
+                "required": True,
+                "status": "invalid",
+                "reason_codes": ["source_frozen_parity_lineage_invalid"],
+            }
         parity_policy = self.model_spec["evaluation_policy"]["parity"]
         if not parity_policy.get("source_frozen_prediction_parity_required", False):
             return {
@@ -440,14 +449,225 @@ class ModelEvaluation:
                 "reason_codes": [],
             }
 
-        evidence = lineage.get("source_frozen_parity")
-        if not isinstance(evidence, dict):
+        provided_evidence = lineage.get("source_frozen_parity")
+        if not isinstance(provided_evidence, dict):
             return {
                 "passed": False,
                 "required": True,
                 "status": "missing",
                 "reason_codes": ["source_frozen_parity_evidence_missing"],
             }
+
+        reason_codes: list[str] = []
+        evidence = dict(provided_evidence)
+        metrics_path = Path(
+            str(getattr(self.model_trainer_artifact, "metrics_file_path", ""))
+        ).resolve()
+        persisted_lineage: dict[str, Any] | None = None
+        persisted_evidence: dict[str, Any] | None = None
+        persisted_payload: dict[str, Any] | None = None
+        try:
+            with metrics_path.open(encoding="utf-8") as metrics_file:
+                persisted_payload = json.load(metrics_file)
+            if not isinstance(persisted_payload, dict):
+                raise ValueError("metrics payload is not an object")
+            persisted_lineage = persisted_payload.get("lineage")
+            if not isinstance(persisted_lineage, dict):
+                raise ValueError("metrics lineage is not an object")
+            persisted_evidence = persisted_lineage.get("source_frozen_parity")
+            if not isinstance(persisted_evidence, dict):
+                raise ValueError("persisted source-frozen parity evidence is missing")
+            if persisted_evidence != provided_evidence:
+                reason_codes.append("source_frozen_parity_in_memory_mismatch")
+            # Replay and release evaluation must use the durable state, even
+            # when a caller passes an in-memory artifact with stale lineage.
+            evidence = dict(persisted_evidence)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            reason_codes.append("source_frozen_parity_persisted_evidence_unreadable")
+
+        effective_lineage = persisted_lineage or lineage
+
+        required_mode = str(
+            parity_policy.get("required_recording_mode", "local_and_mlflow")
+        ).strip()
+        supported_modes = {"local_only", "local_and_mlflow"}
+        if required_mode not in supported_modes:
+            reason_codes.append("source_frozen_required_recording_mode_invalid")
+
+        recording_mode = evidence.get("recording_mode")
+        recording_state = evidence.get("recording_state")
+        if recording_mode != required_mode:
+            reason_codes.append("source_frozen_recording_mode_mismatch")
+        if recording_state != "complete":
+            reason_codes.append("source_frozen_recording_incomplete")
+
+        recording_steps = evidence.get("recording_steps")
+        if not isinstance(recording_steps, dict):
+            recording_steps = {}
+            reason_codes.append("source_frozen_recording_steps_missing")
+        if recording_steps.get("certificate_report_written") is not True:
+            reason_codes.append("source_frozen_certificate_not_recorded")
+        if recording_steps.get("local_metrics_json_committed") is not True:
+            reason_codes.append("source_frozen_local_metrics_not_committed")
+        if required_mode == "local_and_mlflow":
+            if recording_steps.get("mlflow_evidence_logged") is not True:
+                reason_codes.append("source_frozen_mlflow_evidence_not_recorded")
+            if recording_steps.get("mlflow_tags_recorded") is not True:
+                reason_codes.append("source_frozen_mlflow_tags_not_recorded")
+
+        candidate = self.model_trainer_artifact
+        candidate_root = metrics_path.parent.parent
+        expected_identity = {
+            "mlflow_run_id": str(getattr(candidate, "run_id", "") or ""),
+            "model_id": str(getattr(candidate, "model_id", "") or ""),
+            "model_uri": str(getattr(candidate, "model_uri", "") or ""),
+            "dataset_snapshot_id": str(effective_lineage.get("dataset_snapshot_id") or ""),
+            "dataset_content_hash": str(effective_lineage.get("dataset_content_hash") or ""),
+            "model_file_sha256": None,
+        }
+        model_path = Path(
+            str(getattr(candidate, "trained_model_file_path", ""))
+        ).resolve()
+        try:
+            expected_identity["model_file_sha256"] = self._sha256_file(model_path)
+        except (OSError, ValueError):
+            reason_codes.append("source_frozen_candidate_model_unreadable")
+
+        observed_identity = evidence.get("candidate_identity")
+        if not isinstance(observed_identity, dict):
+            observed_identity = {}
+            reason_codes.append("source_frozen_candidate_identity_missing")
+        for field_name, expected_value in expected_identity.items():
+            observed_value = observed_identity.get(field_name)
+            if observed_value != expected_value or expected_value in (None, ""):
+                reason_codes.append(f"source_frozen_candidate_identity_mismatch:{field_name}")
+
+        if persisted_payload is not None:
+            for field_name in ("mlflow_run_id", "model_id", "model_uri"):
+                if str(persisted_payload.get(field_name) or "") != expected_identity[field_name]:
+                    reason_codes.append(
+                        f"source_frozen_persisted_candidate_identity_mismatch:{field_name}"
+                    )
+
+        certificate_relative_path = evidence.get("certificate_report_path")
+        certificate_path: Path | None = None
+        if not isinstance(certificate_relative_path, str) or not certificate_relative_path:
+            reason_codes.append("source_frozen_certificate_path_missing")
+        else:
+            relative_path = Path(certificate_relative_path)
+            if relative_path.is_absolute() or ".." in relative_path.parts:
+                reason_codes.append("source_frozen_certificate_path_not_relocation_safe")
+            else:
+                candidate_path = (candidate_root / relative_path).resolve()
+                try:
+                    candidate_path.relative_to(candidate_root.resolve())
+                except ValueError:
+                    reason_codes.append("source_frozen_certificate_path_outside_candidate")
+                else:
+                    certificate_path = candidate_path
+
+        certificate_report: dict[str, Any] | None = None
+        certificate_sha256: str | None = None
+        if certificate_path is None or not certificate_path.is_file():
+            reason_codes.append("source_frozen_certificate_missing")
+        else:
+            try:
+                certificate_sha256 = self._sha256_file(certificate_path)
+                with certificate_path.open(encoding="utf-8") as certificate_file:
+                    loaded_certificate = json.load(certificate_file)
+                if not isinstance(loaded_certificate, dict):
+                    raise ValueError("certificate is not an object")
+                certificate_report = loaded_certificate
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                reason_codes.append("source_frozen_certificate_unreadable")
+
+        observed_certificate_hash = evidence.get("certificate_report_sha256")
+        if certificate_sha256 is None or observed_certificate_hash != certificate_sha256:
+            reason_codes.append("source_frozen_certificate_hash_mismatch")
+
+        tracking_config = self.model_spec["artifacts"]["mlflow_tracking"]
+        expected_reference_run_id = str(tracking_config.get("reference_final_run_id", ""))
+        expected_reference_model_id = str(
+            tracking_config.get("reference_final_model_id", "")
+        )
+        expected_reference_uri = str(
+            tracking_config.get("reference_final_model_uri")
+            or f"runs:/{expected_reference_run_id}/model"
+        )
+        if evidence.get("reference_run_id") != expected_reference_run_id:
+            reason_codes.append("source_frozen_reference_run_identity_mismatch")
+        if evidence.get("reference_model_id") != expected_reference_model_id:
+            reason_codes.append("source_frozen_reference_model_id_mismatch")
+        if evidence.get("reference_model_uri") != expected_reference_uri:
+            reason_codes.append("source_frozen_reference_model_identity_mismatch")
+
+        attempt_id = evidence.get("certification_attempt_id")
+        if not isinstance(attempt_id, str) or not attempt_id.strip():
+            reason_codes.append("source_frozen_certification_attempt_missing")
+
+        if certificate_report is not None:
+            certificate_recording = certificate_report.get("lineage_recording")
+            if certificate_report.get("certificate_type") != (
+                "source_frozen_notebook_to_production_parity"
+            ):
+                reason_codes.append("source_frozen_certificate_type_mismatch")
+            if certificate_report.get("certificate_version") != "1.0.0":
+                reason_codes.append("source_frozen_certificate_version_mismatch")
+            if certificate_report.get("status") != "verified":
+                reason_codes.append("source_frozen_certificate_not_verified")
+            if certificate_report.get("candidate_run_id") != expected_identity["mlflow_run_id"]:
+                reason_codes.append("source_frozen_certificate_candidate_run_mismatch")
+            if certificate_report.get("certification_attempt_id") != evidence.get(
+                "certification_attempt_id"
+            ):
+                reason_codes.append("source_frozen_certificate_attempt_mismatch")
+            if certificate_report.get("candidate_identity") != evidence.get(
+                "candidate_identity"
+            ):
+                reason_codes.append("source_frozen_certificate_candidate_identity_mismatch")
+            if certificate_report.get("reference_run_id") != expected_reference_run_id:
+                reason_codes.append("source_frozen_certificate_reference_run_mismatch")
+            if certificate_report.get("reference_model_id") != expected_reference_model_id:
+                reason_codes.append("source_frozen_certificate_reference_model_id_mismatch")
+            if certificate_report.get("reference_model_uri") != expected_reference_uri:
+                reason_codes.append("source_frozen_certificate_reference_uri_mismatch")
+            if not isinstance(certificate_recording, dict):
+                reason_codes.append("source_frozen_certificate_recording_missing")
+            else:
+                if certificate_recording.get("recording_state") != "complete":
+                    reason_codes.append("source_frozen_certificate_recording_incomplete")
+                if certificate_recording.get("recording_mode") != required_mode:
+                    reason_codes.append("source_frozen_certificate_recording_mode_mismatch")
+                if certificate_recording.get("certification_attempt_id") != evidence.get(
+                    "certification_attempt_id"
+                ):
+                    reason_codes.append("source_frozen_certificate_recording_attempt_mismatch")
+                if certificate_recording.get("candidate_identity") != evidence.get(
+                    "candidate_identity"
+                ):
+                    reason_codes.append("source_frozen_certificate_recording_identity_mismatch")
+                if certificate_recording.get("certificate_report_path") != certificate_relative_path:
+                    reason_codes.append("source_frozen_certificate_path_mismatch")
+                required_steps = certificate_recording.get("required_steps")
+                if not isinstance(required_steps, dict):
+                    reason_codes.append("source_frozen_certificate_required_steps_missing")
+                else:
+                    if required_steps.get("certificate_report") is not True:
+                        reason_codes.append("source_frozen_certificate_required_step_missing")
+                    if required_steps.get("local_metrics_json") is not True:
+                        reason_codes.append("source_frozen_certificate_required_step_missing")
+                    if required_mode == "local_and_mlflow" and (
+                        required_steps.get("mlflow_evidence") is not True
+                        or required_steps.get("mlflow_tags") is not True
+                    ):
+                        reason_codes.append("source_frozen_certificate_required_remote_step_missing")
+                if certificate_recording.get("local_metrics_json_updated") is not True:
+                    reason_codes.append("source_frozen_certificate_local_metrics_missing")
+                if required_mode == "local_and_mlflow" and (
+                    certificate_recording.get("mlflow_evidence_logged") is not True
+                    or certificate_recording.get("mlflow_tags_recorded") is not True
+                ):
+                    reason_codes.append("source_frozen_certificate_remote_recording_missing")
 
         error = self._finite_float(evidence.get("maximum_absolute_prediction_error"))
         allowed_error = self._finite_float(
@@ -467,7 +687,6 @@ class ModelEvaluation:
                 ),
             },
         }
-        reason_codes: list[str] = []
         if not checks["status_verified"]:
             reason_codes.append("source_frozen_parity_not_verified")
         if not checks["split_id_sets_match"]:
@@ -481,9 +700,20 @@ class ModelEvaluation:
             "passed": not reason_codes,
             "required": True,
             "status": evidence.get("status"),
+            "recording_mode": recording_mode,
+            "recording_state": recording_state,
+            "certificate_report_path": certificate_relative_path,
             "checks": checks,
             "reason_codes": reason_codes,
         }
+
+    @staticmethod
+    def _sha256_file(file_path: Path) -> str:
+        digest = hashlib.sha256()
+        with file_path.open("rb") as input_file:
+            for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def _get_champion_info(self, client) -> dict:
         """Read valid Champion validation evidence without mutating MLflow."""

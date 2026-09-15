@@ -71,8 +71,10 @@ The report is written to:
 %CANDIDATE_ARTIFACT_DIR%\source_frozen_parity\parity_report.json
 ```
 
-The first run is read-only with respect to the candidate lineage. It must
-return `status: "verified"` before evidence is applied.
+The first run is read-only with respect to the candidate lineage. Its
+`status: "verified"` means only that the numerical parity checks passed. A
+lineage-bound run deliberately persists `status: "pending"` until the complete
+recording transaction finishes.
 
 ## Apply successful evidence manually
 
@@ -84,16 +86,29 @@ audit, inspect the report first and then rerun with explicit lineage recording:
 uv run python -m vehicle_insurance.verification.source_frozen_parity --candidate-artifact-dir "%CANDIDATE_ARTIFACT_DIR%" --apply-lineage --log-mlflow-evidence
 ```
 
-`--apply-lineage` updates only the candidate artifact's
-`model_trainer\metrics.json` lineage. `--log-mlflow-evidence` additionally
-logs `lineage/source_frozen_parity.json` and verification tags to that
-candidate's existing MLflow run. No model registry alias is changed.
+`--apply-lineage` records a fresh certification attempt in the candidate
+artifact. It first writes pending `model_trainer\metrics.json` evidence and a
+pending certificate, then completes the requested local and remote steps. The
+final metrics entry is `status: "verified"` only after the
+certificate is durably written and its SHA-256 digest is committed. The
+certificate reference is candidate-relative
+(`source_frozen_parity/parity_report.json`), so it remains resolvable when the
+approved artifact directory is relocated. `--log-mlflow-evidence` additionally
+logs a pending remote copy, finalizes it only after every tag succeeds, and
+records the MLflow artifact/tag completion flags for the final local commit.
+No model registry alias is changed.
 
-The formal pipeline supplies both options automatically. If MLflow evidence
-logging fails, the parity stage is recorded as
-`verified_but_lineage_recording_failed` and the candidate is not release
-qualified; inspect the parity report errors instead of treating local lineage
-alone as complete evidence.
+Recording modes are explicit: `audit_only` (no lineage mutation), `local_only`,
+and `local_and_mlflow`. The release policy in `configs/model_spec.yaml`
+requires `local_and_mlflow`; a local-only audit can be useful for diagnosis but
+cannot satisfy release readiness.
+
+The formal pipeline supplies both options automatically. Any local write,
+remote log/tag, final certificate write, or process interruption leaves
+`pending`/`failed` persisted evidence (or an unreadable artifact), and replay
+rejects it. A newer failed attempt also supersedes an older certificate unless
+the older, identity-matching certificate remains the explicitly referenced
+one.
 
 ## Replay evaluation after certification
 

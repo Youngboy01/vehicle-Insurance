@@ -29,6 +29,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from uuid import uuid4
 
 import mlflow
 import mlflow.sklearn
@@ -110,6 +111,7 @@ class SourceFrozenParityCertification:
         )
         self.apply_lineage = apply_lineage
         self.log_mlflow_evidence = log_mlflow_evidence
+        self.certification_attempt_id = uuid4().hex
 
         self.errors: list[dict[str, Any]] = []
         self.warnings: list[dict[str, Any]] = []
@@ -120,6 +122,8 @@ class SourceFrozenParityCertification:
         self.candidate_splits: dict[str, pd.DataFrame] = {}
         self.reference_splits: dict[str, dict[str, list[Any]]] = {}
         self.candidate_model: Any = None
+        self.candidate_model_path: Path | None = None
+        self.candidate_identity: dict[str, Any] = {}
         self.reference_model: Any = None
         self.candidate_predictions: np.ndarray | None = None
         self.reference_predictions: np.ndarray | None = None
@@ -205,6 +209,25 @@ class SourceFrozenParityCertification:
         logger.warning("Source-frozen parity warning: %s - %s", code, message)
         self.warnings.append({"code": code, "message": message, **details})
 
+    def _certificate_report_relative_path(self) -> str:
+        """Return a relocation-safe certificate path relative to the candidate."""
+
+        try:
+            relative_path = self.report_path.relative_to(self.candidate_artifact_dir)
+        except ValueError as error:
+            raise ValueError(
+                "A lineage-bound parity certificate must be stored inside the "
+                "candidate artifact directory"
+            ) from error
+        if not relative_path.parts or ".." in relative_path.parts:
+            raise ValueError("Parity certificate path must remain inside the candidate artifact")
+        return relative_path.as_posix()
+
+    def _recording_mode(self) -> str:
+        if not getattr(self, "apply_lineage", False):
+            return "audit_only"
+        return "local_and_mlflow" if getattr(self, "log_mlflow_evidence", False) else "local_only"
+
     def _run_stage(
         self,
         stage: str,
@@ -259,6 +282,9 @@ class SourceFrozenParityCertification:
         self.expected_reference_metrics = dict(
             self.model_spec["evaluation_policy"]["frozen_reference_metrics"]
         )
+
+        if self.apply_lineage:
+            self._certificate_report_relative_path()
 
         if (
             self.configured_reference_model_uri
@@ -336,6 +362,7 @@ class SourceFrozenParityCertification:
             raise ValueError("Candidate source_manifest.json must contain a JSON object")
         self.source_manifest = source_manifest
 
+        self.candidate_model_path = required_paths["candidate_model"]
         self.candidate_model = load_object(str(required_paths["candidate_model"]))
         if not hasattr(self.candidate_model, "predict_proba"):
             raise TypeError("Candidate model does not expose predict_proba")
@@ -345,6 +372,30 @@ class SourceFrozenParityCertification:
         )
         if not candidate_run_id:
             raise ValueError("Candidate MLflow run ID is missing from metrics/lineage")
+
+        self.candidate_identity = self._build_candidate_identity()
+
+    def _build_candidate_identity(self) -> dict[str, Any]:
+        """Return the immutable identity bound to one candidate artifact."""
+
+        payload = self.candidate_metrics_payload
+        lineage = self.candidate_lineage
+        model_path = self.candidate_model_path or (
+            self.candidate_artifact_dir / "model_trainer" / "model.pkl"
+        )
+        model_file_sha256 = self._sha256_file(model_path)
+        return {
+            "mlflow_run_id": str(
+                payload.get("mlflow_run_id")
+                or lineage.get("mlflow_run_id")
+                or ""
+            ),
+            "model_id": str(payload.get("model_id") or lineage.get("model_id") or ""),
+            "model_uri": str(payload.get("model_uri") or lineage.get("model_uri") or ""),
+            "dataset_snapshot_id": str(lineage.get("dataset_snapshot_id") or ""),
+            "dataset_content_hash": str(lineage.get("dataset_content_hash") or ""),
+            "model_file_sha256": model_file_sha256,
+        }
 
     def _reconstruct_notebook_splits(self) -> None:
         if not self.source_data_path.is_file():
@@ -878,15 +929,32 @@ class SourceFrozenParityCertification:
             bool(check.get("passed")) for check in parity_checks.values()
         )
         status = "verified" if all_checks_passed and not self.errors else "failed"
+        recording_mode = self._recording_mode()
+        # A lineage-bound certificate is not release evidence while its
+        # recording transaction is in progress.  The status becomes verified
+        # only after the final certificate and metrics commit succeeds.
+        if status == "verified" and getattr(self, "apply_lineage", False):
+            status = "pending"
+        if getattr(self, "apply_lineage", False):
+            recording_state = "pending" if status == "pending" else "failed"
+        else:
+            recording_state = "not_requested"
+        candidate_identity = dict(getattr(self, "candidate_identity", {}) or {})
+        attempt_id = str(
+            getattr(self, "certification_attempt_id", "not_recorded")
+        )
         return {
             "certificate_type": "source_frozen_notebook_to_production_parity",
             "certificate_version": "1.0.0",
             "status": status,
             "verified_at_utc": datetime.now(timezone.utc).isoformat(),
             "candidate_artifact_dir": str(self.candidate_artifact_dir),
+            "candidate_identity": candidate_identity,
+            "certification_attempt_id": attempt_id,
             "candidate_run_id": self.candidate_lineage.get("mlflow_run_id")
             or self.candidate_metrics_payload.get("mlflow_run_id"),
             "reference_run_id": self.reference_run_id,
+            "reference_model_id": getattr(self, "configured_reference_model_id", ""),
             "reference_model_uri": self.reference_model_uri,
             "source_data_path": str(self.source_data_path),
             "source_manifest_path": str(
@@ -907,9 +975,25 @@ class SourceFrozenParityCertification:
             "warnings": self.warnings,
             "errors": self.errors,
             "lineage_recording": {
-                "requested": self.apply_lineage,
+                "requested": getattr(self, "apply_lineage", False),
+                "recording_mode": recording_mode,
+                "recording_state": recording_state,
+                "certification_attempt_id": attempt_id,
+                "candidate_identity": candidate_identity,
+                "certificate_report_path": (
+                    self._certificate_report_relative_path()
+                    if getattr(self, "apply_lineage", False)
+                    else None
+                ),
                 "local_metrics_json_updated": False,
                 "mlflow_evidence_logged": False,
+                "mlflow_tags_recorded": False,
+                "required_steps": {
+                    "certificate_report": getattr(self, "apply_lineage", False),
+                    "local_metrics_json": getattr(self, "apply_lineage", False),
+                    "mlflow_evidence": getattr(self, "log_mlflow_evidence", False),
+                    "mlflow_tags": getattr(self, "log_mlflow_evidence", False),
+                },
             },
         }
 
@@ -918,12 +1002,28 @@ class SourceFrozenParityCertification:
         temporary_path = self.report_path.with_suffix(
             self.report_path.suffix + ".tmp"
         )
-        with temporary_path.open("w", encoding="utf-8") as file:
+        with temporary_path.open("w", encoding="utf-8", newline="\n") as file:
             json.dump(report, file, indent=2, default=str)
+            file.flush()
+            os.fsync(file.fileno())
         temporary_path.replace(self.report_path)
         logger.info("Source-frozen parity report saved to %s", self.report_path)
 
-    def _apply_local_lineage(self, report: dict[str, Any]) -> None:
+    def _apply_local_lineage(
+        self,
+        report: dict[str, Any],
+        recording_state: str = "pending",
+    ) -> None:
+        """Persist pending or complete candidate-bound parity evidence.
+
+        ``verified`` is written only during the final commit after the
+        certificate report and all requested remote evidence have succeeded.
+        The pending write intentionally supersedes older evidence so replay
+        cannot accept a partially recorded newer attempt.
+        """
+
+        if recording_state not in {"pending", "complete"}:
+            raise ValueError("Parity lineage recording state must be pending or complete")
         metrics_path = self.candidate_artifact_dir / "model_trainer" / "metrics.json"
         if not metrics_path.is_file():
             raise FileNotFoundError(f"Candidate metrics file not found: {metrics_path}")
@@ -933,8 +1033,46 @@ class SourceFrozenParityCertification:
         if not isinstance(lineage, dict):
             raise ValueError("Candidate metrics file has no lineage object")
 
+        recording = report.get("lineage_recording")
+        if not isinstance(recording, dict):
+            raise ValueError("Parity report has no lineage_recording object")
+        certificate_report_path = self._certificate_report_relative_path()
+        certificate_report_sha256 = (
+            self._sha256_file(self.report_path)
+            if recording_state == "complete" and self.report_path.is_file()
+            else None
+        )
+        candidate_identity = dict(
+            recording.get("candidate_identity")
+            or getattr(self, "candidate_identity", {})
+            or {}
+        )
+        current_attempt_id = str(
+            recording.get(
+                "certification_attempt_id",
+                getattr(self, "certification_attempt_id", "not_recorded"),
+            )
+        )
+        previous_evidence = lineage.get("source_frozen_parity")
+        if recording_state == "complete":
+            if not isinstance(previous_evidence, dict) or str(
+                previous_evidence.get("certification_attempt_id", "")
+            ) != current_attempt_id:
+                raise ValueError(
+                    "Parity completion attempt was superseded before the final commit"
+                )
+            if previous_evidence.get("candidate_identity") != candidate_identity:
+                raise ValueError(
+                    "Parity completion candidate identity changed before the final commit"
+                )
         evidence = {
-            "status": "verified",
+            "status": "verified" if recording_state == "complete" else "pending",
+            "recording_state": recording_state,
+            "recording_mode": recording.get(
+                "recording_mode", self._recording_mode()
+            ),
+            "certification_attempt_id": current_attempt_id,
+            "candidate_identity": candidate_identity,
             "split_id_sets_match": report["checks"]["split_ids"][
                 "split_id_sets_match"
             ],
@@ -952,20 +1090,41 @@ class SourceFrozenParityCertification:
                 "transformed_values"
             ]["maximum_absolute_error"],
             "reference_run_id": self.reference_run_id,
+            "reference_model_id": getattr(self, "configured_reference_model_id", ""),
             "reference_model_uri": self.reference_model_uri,
-            "certificate_report_path": str(self.report_path),
+            "certificate_report_path": certificate_report_path,
+            "certificate_report_sha256": certificate_report_sha256,
             "verified_at_utc": report["verified_at_utc"],
+            "recording_steps": {
+                "certificate_report_written": (
+                    recording_state == "complete" and self.report_path.is_file()
+                ),
+                "local_metrics_json_committed": recording_state == "complete",
+                "mlflow_evidence_logged": bool(
+                    recording.get("mlflow_evidence_logged")
+                ),
+                "mlflow_tags_recorded": bool(
+                    recording.get("mlflow_tags_recorded")
+                ),
+            },
         }
         lineage["source_frozen_parity"] = evidence
         payload["lineage"] = lineage
         temporary_path = metrics_path.with_suffix(metrics_path.suffix + ".tmp")
-        with temporary_path.open("w", encoding="utf-8") as file:
+        with temporary_path.open("w", encoding="utf-8", newline="\n") as file:
             json.dump(payload, file, indent=2, default=str)
+            file.flush()
+            os.fsync(file.fileno())
         temporary_path.replace(metrics_path)
         report["lineage_recording"]["local_metrics_json_updated"] = True
         logger.info("Local candidate lineage updated at %s", metrics_path)
 
-    def _log_mlflow_evidence(self, report: dict[str, Any]) -> None:
+    def _log_mlflow_evidence(
+        self,
+        report: dict[str, Any],
+        *,
+        finalize: bool = False,
+    ) -> None:
         candidate_run_id = str(report.get("candidate_run_id") or "")
         tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
         if not candidate_run_id:
@@ -975,15 +1134,53 @@ class SourceFrozenParityCertification:
         mlflow.set_tracking_uri(tracking_uri)
 
         # The status is part of the persisted certificate. Prepare the exact
-        # payload that will be logged before opening the MLflow run, while
-        # keeping the caller's report false until the operation succeeds.
+        # remote payload before opening the MLflow run, while keeping the
+        # caller's report false until the artifact and every tag succeed.
         mlflow_report = deepcopy(report)
-        mlflow_report["lineage_recording"]["mlflow_evidence_logged"] = True
+        remote_recording = mlflow_report["lineage_recording"]
+        remote_recording.setdefault(
+            "certification_attempt_id",
+            str(getattr(self, "certification_attempt_id", "")),
+        )
+        remote_recording.setdefault(
+            "candidate_identity",
+            dict(getattr(self, "candidate_identity", {}) or {}),
+        )
+        remote_recording.setdefault("recording_mode", self._recording_mode())
+        remote_recording["recording_state"] = (
+            "complete" if finalize else "remote_recorded_pending_local_commit"
+        )
+        # The first artifact copy describes the state before tags are
+        # attempted. A second copy after the tag loop records the complete
+        # remote state. This makes a log-success/tag-failure partial state
+        # explicit instead of falsely claiming tag completion.
+        remote_recording["mlflow_evidence_logged"] = False
+        remote_recording["mlflow_tags_recorded"] = False
+        mlflow_report["status"] = "verified" if finalize else "pending"
         with mlflow.start_run(run_id=candidate_run_id):
             mlflow.log_dict(mlflow_report, "lineage/source_frozen_parity.json")
-            mlflow.set_tag("source_frozen_parity", "verified")
-            mlflow.set_tag("source_frozen_parity_certificate_version", "1.0.0")
+            tags = {
+                "source_frozen_parity": "verified" if finalize else "pending",
+                "source_frozen_parity_certificate_version": "1.0.0",
+                "source_frozen_parity_certificate_attempt_id": str(
+                    remote_recording.get("certification_attempt_id", "")
+                ),
+                "source_frozen_parity_candidate_model_id": str(
+                    (
+                        remote_recording.get("candidate_identity") or {}
+                    ).get("model_id", "")
+                ),
+                "source_frozen_parity_recording_mode": str(
+                    remote_recording.get("recording_mode", "")
+                ),
+            }
+            for key, value in tags.items():
+                mlflow.set_tag(key, value)
+            remote_recording["mlflow_evidence_logged"] = True
+            remote_recording["mlflow_tags_recorded"] = True
+            mlflow.log_dict(mlflow_report, "lineage/source_frozen_parity.json")
         report["lineage_recording"]["mlflow_evidence_logged"] = True
+        report["lineage_recording"]["mlflow_tags_recorded"] = True
         logger.info("Source-frozen parity evidence logged to MLflow run %s", candidate_run_id)
 
     def run(self) -> dict[str, Any]:
@@ -1004,17 +1201,70 @@ class SourceFrozenParityCertification:
             self._run_stage("metric_comparison", self._compare_metrics)
 
         report = self._build_report()
-        if report["status"] == "verified" and self.apply_lineage:
-            self._run_stage("local_lineage_recording", lambda: self._apply_local_lineage(report))
-            if not self.errors and self.log_mlflow_evidence:
-                self._run_stage("mlflow_evidence_recording", lambda: self._log_mlflow_evidence(report))
-            report["errors"] = self.errors
+
+        # A lineage-bound run is a small durable transaction.  The pending
+        # metrics evidence is written before the certificate and any remote
+        # call so a certificate-write failure cannot leave an older verified
+        # metrics entry authoritative. Only the final certificate write,
+        # requested remote evidence, and complete metrics commit expose
+        # ``verified`` evidence. Any interruption between these steps leaves a
+        # persisted state that the evaluator rejects.
+        if report["status"] == "pending" and getattr(self, "apply_lineage", False):
+            self._run_stage(
+                "local_lineage_pending_recording",
+                lambda: self._apply_local_lineage(report, "pending"),
+            )
+            if not self.errors:
+                self._run_stage(
+                    "pending_certificate_write",
+                    lambda: self._write_report(report),
+                )
+            if not self.errors and getattr(self, "log_mlflow_evidence", False):
+                self._run_stage(
+                    "mlflow_evidence_recording",
+                    lambda: self._log_mlflow_evidence(report),
+                )
+
+            if not self.errors:
+                recording = report["lineage_recording"]
+                report["status"] = "verified"
+                recording["recording_state"] = "complete"
+                self._run_stage(
+                    "final_certificate_write",
+                    lambda: self._write_report(report),
+                )
+            if not self.errors and getattr(self, "log_mlflow_evidence", False):
+                self._run_stage(
+                    "mlflow_evidence_finalization",
+                    lambda: self._log_mlflow_evidence(report, finalize=True),
+                )
+            if not self.errors:
+                self._run_stage(
+                    "local_lineage_complete_commit",
+                    lambda: self._apply_local_lineage(report, "complete"),
+                )
+
             if self.errors:
-                report["status"] = "verified_but_lineage_recording_failed"
-        elif self.log_mlflow_evidence:
+                # Best effort only: rejection must come from the durable
+                # pending/failed evidence and certificate validation, not from
+                # successfully writing a failure marker after storage failed.
+                report["errors"] = self.errors
+                report["status"] = "failed"
+                report["lineage_recording"]["recording_state"] = "failed"
+                try:
+                    self._write_report(report)
+                except Exception as error:
+                    self._record_error("failure_certificate_write", error)
+            self._report = report
+            return report
+
+        if getattr(self, "log_mlflow_evidence", False):
             self._record_error(
                 "mlflow_evidence_recording",
-                ValueError("--log-mlflow-evidence requires --apply-lineage and a verified report"),
+                ValueError(
+                    "--log-mlflow-evidence requires --apply-lineage and a "
+                    "numerically verified report"
+                ),
             )
             report["errors"] = self.errors
             report["status"] = "failed"
