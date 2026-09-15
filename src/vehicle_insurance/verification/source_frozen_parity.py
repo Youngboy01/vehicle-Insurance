@@ -279,10 +279,13 @@ class SourceFrozenParityCertification:
             )
         )
         # The canonical parity certificate is this writer's own transactional
-        # output. A fresh custom destination becomes owned only after its first
-        # validation; bind that exemption to the exact path claimed by this
-        # attempt so a later path mutation cannot unprotect another file.
+        # output. An existing custom file is validated but never claimed; a
+        # later lineage load may identify it as protected evidence. A fresh
+        # custom destination becomes owned only after validation; bind that
+        # exemption to the exact path claimed by this attempt so a later path
+        # mutation cannot unprotect another file.
         destination = getattr(self, "report_path_input", self.report_path)
+        destination_preexisting = Path(destination).expanduser().is_file()
         destination_resolved = resolve_report_path(destination)
         owned_destination = getattr(self, "_report_destination_owned_path", None)
         owned_destination_resolved = (
@@ -307,7 +310,7 @@ class SourceFrozenParityCertification:
             destination,
             protected_paths=protected,
         )
-        if claim_destination:
+        if claim_destination and not destination_preexisting:
             self._report_destination_owned_path = target
         return target, tuple(protected)
 
