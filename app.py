@@ -43,7 +43,10 @@ from vehicle_insurance.constants import (
 from vehicle_insurance.exceptions.handle_exception import (
     VehicleInsuranceException,
 )
-from vehicle_insurance.contracts.data_contract import DataContractValidator
+from vehicle_insurance.contracts.data_contract import (
+    DataContractValidationException,
+    DataContractValidator,
+)
 from vehicle_insurance.logger.logger_config import setup_logger
 from vehicle_insurance.utils import get_mlflow_client, read_yaml_file
 
@@ -778,6 +781,21 @@ def _validated_scoring_dataframe(
             scoring_dataframe,
             mode="scoring",
         )
+    except DataContractValidationException as error:
+        summary = error.validation_summary
+        failure_fields = sorted(
+            str(field)
+            for field in summary.get("field_counts", {})
+            if field != "unknown"
+        )
+        raise ScoringContractError(
+            error_code="SCORING_VALUE_INVALID",
+            message=(
+                "Scoring rejected: one or more values violate the scoring "
+                "data contract."
+            ),
+            fields=failure_fields,
+        ) from None
     except VehicleInsuranceException as error:
         message = str(error)
         failure_fields = [

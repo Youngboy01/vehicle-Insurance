@@ -7,6 +7,7 @@ from pandas import DataFrame
 
 from vehicle_insurance.constants import SCHEMA_FILE_PATH
 from vehicle_insurance.contracts.data_contract import (
+    DataContractValidationException,
     DataContractValidator,
 )
 from vehicle_insurance.entities.artifact_entity import (
@@ -59,32 +60,51 @@ class DataValidation:
             )
             return True, []
         except VehicleInsuranceException as error:
-            logger.error(
-                "%s data contract validation failed: %s",
-                df_label,
-                error,
-            )
-
-            cause = error.__cause__
-            failure_cases = getattr(cause, "failure_cases", None)
-
-            if failure_cases is not None:
-                errors = (
-                    failure_cases.astype(object)
-                    .where(
-                        failure_cases.notna(),
-                        None,
-                    )
-                    .to_dict(orient="records")
+            summary = getattr(error, "validation_summary", None)
+            if isinstance(error, DataContractValidationException) and isinstance(
+                summary, dict
+            ):
+                logger.error(
+                    "%s data contract validation failed: mode=%s failures=%d "
+                    "fields=%s checks=%s",
+                    df_label,
+                    summary["mode"],
+                    summary["failure_count"],
+                    summary["field_counts"],
+                    summary["check_counts"],
                 )
+                errors = [
+                    {
+                        **group,
+                        "failure_case": None,
+                        "index": None,
+                    }
+                    for group in summary["groups"]
+                ]
+                if not errors:
+                    errors = [
+                        {
+                            "schema_context": "data_contract",
+                            "column": None,
+                            "check": "contract_validation",
+                            "failure_case": None,
+                            "index": None,
+                            "failure_count": summary["failure_count"],
+                        }
+                    ]
             else:
+                logger.error(
+                    "%s data contract validation failed",
+                    df_label,
+                )
                 errors = [
                     {
                         "schema_context": "data_contract",
                         "column": None,
                         "check": "contract_validation",
-                        "failure_case": str(error),
+                        "failure_case": None,
                         "index": None,
+                        "failure_count": 1,
                     }
                 ]
 

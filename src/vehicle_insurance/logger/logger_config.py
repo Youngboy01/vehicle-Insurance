@@ -13,7 +13,7 @@ LOG_FILE = os.path.join(LOG_DIR, "app.log")
 
 def setup_logger():
     logger = logging.getLogger("VehicleInsuranceLogger")
-    if not logger.hasHandlers():
+    if not logger.handlers:
         logger.setLevel(logging.DEBUG)
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

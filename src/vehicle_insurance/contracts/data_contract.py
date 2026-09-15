@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -22,6 +22,19 @@ ValidationMode = Literal["training", "scoring"]
 
 class DataContractError(ValueError):
     """Raised when data violates the project data contract."""
+
+
+class DataContractValidationException(VehicleInsuranceException):
+    """Validation failure carrying only safe field/check metadata."""
+
+    def __init__(self, summary: dict[str, Any], error_detail: sys) -> None:
+        self.validation_summary = summary
+        safe_error = DataContractError(
+            "Data contract validation failed: "
+            f"mode={summary.get('mode', 'unknown')} "
+            f"failures={int(summary.get('failure_count', 0))}"
+        )
+        super().__init__(safe_error, error_detail)
 
 
 class DataContractValidator:
@@ -116,8 +129,13 @@ class DataContractValidator:
             return validated_dataframe
 
         except (SchemaError, SchemaErrors) as error:
-            self._log_pandera_failure(error, mode)
-            raise VehicleInsuranceException(error, sys) from error
+            summary = self._log_pandera_failure(error, mode)
+            raise DataContractValidationException(summary, sys) from None
+
+        except DataContractError as error:
+            summary = self._summarize_contract_error(error, mode)
+            self._log_validation_summary(summary)
+            raise DataContractValidationException(summary, sys) from None
 
         except Exception as error:
             logger.exception(
@@ -304,23 +322,170 @@ class DataContractValidator:
         if len(target_values) < 2:
             raise DataContractError("Training data must contain both target classes")
 
-    @staticmethod
-    def _log_pandera_failure(
+    def _summarize_pandera_failure(
+        self,
         error: SchemaError | SchemaErrors,
         mode: ValidationMode,
-    ) -> None:
-        logger.error(
-            "Pandera validation failed: mode=%s error=%s",
+    ) -> dict[str, Any]:
+        failure_cases = getattr(error, "failure_cases", None)
+        if not isinstance(failure_cases, pd.DataFrame):
+            return self._build_validation_summary(
+                mode,
+                1,
+                {"unknown": 1},
+                {"contract_validation": 1},
+                {("data_contract", "unknown", "contract_validation"): 1},
+            )
+
+        expected_fields = set(
+            self.contract["schemas"][mode]["required_columns"]
+        )
+        metadata_columns = [
+            column
+            for column in ("schema_context", "column", "check")
+            if column in failure_cases.columns
+        ]
+        if not metadata_columns:
+            failure_count = max(1, int(len(failure_cases)))
+            return self._build_validation_summary(
+                mode,
+                failure_count,
+                {"unknown": failure_count},
+                {"contract_validation": failure_count},
+                {
+                    ("data_contract", "unknown", "contract_validation"): failure_count
+                },
+            )
+        field_counts: dict[str, int] = {}
+        check_counts: dict[str, int] = {}
+        group_counts: dict[tuple[str, str, str], int] = {}
+        for values in failure_cases.loc[:, metadata_columns].itertuples(
+            index=False,
+            name=None,
+        ):
+            metadata = dict(zip(metadata_columns, values))
+            raw_field = metadata.get("column")
+            field = (
+                raw_field
+                if isinstance(raw_field, str) and raw_field in expected_fields
+                else "unknown"
+            )
+            raw_context = metadata.get("schema_context")
+            schema_context = (
+                raw_context
+                if isinstance(raw_context, str)
+                and raw_context in {"Column", "DataFrameSchema"}
+                else "data_contract"
+            )
+            raw_check = metadata.get("check")
+            check = self._safe_check_identifier(raw_check)
+            field_counts[field] = field_counts.get(field, 0) + 1
+            check_counts[check] = check_counts.get(check, 0) + 1
+            group = (schema_context, field, check)
+            group_counts[group] = group_counts.get(group, 0) + 1
+
+        return self._build_validation_summary(
             mode,
-            str(error),
+            max(1, int(len(failure_cases))),
+            field_counts,
+            check_counts,
+            group_counts,
         )
 
-        failure_cases = getattr(error, "failure_cases", None)
+    @staticmethod
+    def _build_validation_summary(
+        mode: str,
+        failure_count: int,
+        field_counts: dict[str, int],
+        check_counts: dict[str, int],
+        group_counts: dict[tuple[str, str, str], int],
+    ) -> dict[str, Any]:
+        safe_mode = mode if mode in {"training", "scoring"} else "unknown"
+        groups = [
+            {
+                "schema_context": schema_context,
+                "column": field,
+                "check": check,
+                "failure_count": count,
+            }
+            for (schema_context, field, check), count in sorted(group_counts.items())
+        ]
+        return {
+            "mode": safe_mode,
+            "failure_count": int(failure_count),
+            "field_counts": dict(sorted(field_counts.items())),
+            "check_counts": dict(sorted(check_counts.items())),
+            "groups": groups,
+        }
 
-        if failure_cases is not None:
-            failure_sample = failure_cases.head(20)
-            logger.error(
-                "Pandera failure cases: total=%d sample:\n%s",
-                len(failure_cases),
-                failure_sample.to_string(index=False),
-            )
+    def _summarize_contract_error(
+        self,
+        error: DataContractError,
+        mode: ValidationMode,
+    ) -> dict[str, Any]:
+        """Return allowlisted field metadata for non-Pandera contract errors."""
+
+        schema = self.contract.get("schemas", {}).get(mode, {})
+        expected_fields = schema.get("required_columns", [])
+        message = str(error)
+        fields = {
+            field: 1
+            for field in expected_fields
+            if field in message
+        }
+        if not fields:
+            fields = {"unknown": 1}
+        failure_count = sum(fields.values())
+        return self._build_validation_summary(
+            mode,
+            failure_count,
+            fields,
+            {"contract_validation": failure_count},
+            {
+                ("data_contract", field, "contract_validation"): count
+                for field, count in fields.items()
+            },
+        )
+
+    @staticmethod
+    def _safe_check_identifier(raw_check: object) -> str:
+        """Map validator checks to stable identifiers, never raw text."""
+
+        if not isinstance(raw_check, str):
+            return "contract_validation"
+        check = raw_check.strip().lower()
+        if check.startswith("isin("):
+            return "allowed_values"
+        if check.startswith("greater_than_or_equal_to("):
+            return "minimum"
+        if check.startswith("less_than_or_equal_to("):
+            return "maximum"
+        if check.startswith("greater_than("):
+            return "minimum_exclusive"
+        if "numeric" in check:
+            return "numeric_type"
+        if check.startswith("dtype("):
+            return "dtype"
+        return "contract_validation"
+
+    def _log_pandera_failure(
+        self,
+        error: SchemaError | SchemaErrors,
+        mode: ValidationMode,
+    ) -> dict[str, Any]:
+        """Log validation metadata without submitted values or raw errors."""
+
+        summary = self._summarize_pandera_failure(error, mode)
+        self._log_validation_summary(summary)
+        return summary
+
+    @staticmethod
+    def _log_validation_summary(summary: dict[str, Any]) -> None:
+        logger.error(
+            "Data contract validation failed: mode=%s failures=%d "
+            "fields=%s checks=%s",
+            summary["mode"],
+            summary["failure_count"],
+            summary["field_counts"],
+            summary["check_counts"],
+        )
