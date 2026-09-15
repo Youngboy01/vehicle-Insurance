@@ -257,7 +257,7 @@ The returned score is intended for marketing prioritization. It is not a claim p
 
 Before either endpoint calls the model, the API applies the shared scoring contract in `configs/schema.yaml`: required identifiers and fields, domain/range checks, finite numeric values, allowed categories, forbidden outcome fields, exact columns, and batch ID uniqueness. Customer IDs must be whole numbers from `1` through `9,007,199,254,740,991`, the largest integer range represented exactly by both the Python API and browser JavaScript; larger or malformed values are rejected before scoring.
 
-All API failures use the stable JSON envelope `{"error_code": "...", "message": "...", "fields": []}`. Malformed scoring requests use `SCORING_SCHEMA_INVALID`, invalid domain values use `SCORING_VALUE_INVALID`, an unavailable serving model uses `MODEL_NOT_READY`, a failed candidate load uses `MODEL_LOAD_FAILED` or `MODEL_RELOAD_FAILED`, model execution uses `MODEL_INFERENCE_FAILED`, an unavailable MLflow/model-store dependency uses `DEPENDENCY_UNAVAILABLE`, and unexpected application failures use `INTERNAL_ERROR`. Messages are safe for clients and never contain stack traces, credentials, or customer attributes.
+All API failures use the stable JSON envelope `{"error_code": "...", "message": "...", "fields": []}`. Malformed scoring requests use `SCORING_SCHEMA_INVALID`, invalid domain values use `SCORING_VALUE_INVALID`, a saturated scoring limiter uses `SCORING_BUSY`, an unavailable serving model uses `MODEL_NOT_READY`, a failed candidate load uses `MODEL_LOAD_FAILED` or `MODEL_RELOAD_FAILED`, a concurrent reload uses `RELOAD_BUSY`, model execution uses `MODEL_INFERENCE_FAILED`, an unavailable MLflow/model-store dependency uses `DEPENDENCY_UNAVAILABLE`, and unexpected application failures use `INTERNAL_ERROR`. Messages are safe for clients and never contain stack traces, credentials, or customer attributes.
 
 **Example `/rank` request:**
 ```json
@@ -337,8 +337,26 @@ MONGODB_URL=<your MongoDB Atlas connection string>
 MLFLOW_TRACKING_URI=<your MLflow tracking server URI>
 MLFLOW_TRACKING_USERNAME=<if using DagsHub-hosted MLflow>
 MLFLOW_TRACKING_PASSWORD=<if using DagsHub-hosted MLflow>
+MLFLOW_HTTP_REQUEST_TIMEOUT=30
 RELOAD_TOKEN=<any secret string — protects the /reload endpoint>
+# Optional serving capacity overrides; defaults are intentionally conservative.
+VEHICLE_INSURANCE_SCORING_CONCURRENCY=1
+VEHICLE_INSURANCE_MODEL_THREADS=1
 ```
+
+Scoring is bounded per process: one `/predict` or `/rank` operation is active
+by default, and an excess request receives `503 SCORING_BUSY` instead of being
+queued indefinitely. Reload has its own one-operation limit and returns
+`503 RELOAD_BUSY` when another reload is running. The complete synchronous
+validation, inference, ranking, and response-building operation runs in a
+worker thread, so lightweight health/readiness checks remain available while
+scoring or MLflow model loading is in progress. The serving model overrides the
+training `n_jobs` setting with `VEHICLE_INSURANCE_MODEL_THREADS` (default `1`);
+increase it or scoring concurrency only after measuring CPU capacity and
+checking concurrent inference safety. These limits are process-local, so each
+additional Uvicorn worker creates another model and another independent budget.
+Set MLflow's `MLFLOW_HTTP_REQUEST_TIMEOUT` to an appropriate finite value for
+the deployment so a remote reload cannot wait indefinitely.
 
 ---
 
@@ -403,6 +421,10 @@ requirements and provenance recorded before a fresh candidate run.
 uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 ```
 
+Use one Uvicorn worker without `--reload` for the baseline serving-capacity
+verification; development reloaders and additional workers create separate
+process-local models and capacity limiters.
+
 Then visit:
 - `http://localhost:8080` — dashboard UI
 - `http://localhost:8080/docs` — Swagger UI
@@ -410,6 +432,12 @@ Then visit:
 During local development, the dashboard derives a cache-busting query value from the current `static/style.css` modification time. When the stylesheet changes, the rendered link changes automatically, so the browser fetches the new CSS without requiring `Ctrl+F5` or manual version editing.
 
 > Current serving contract: the API loads the immutable candidate model ID, URI, and run ID recorded in `configs/model_spec.yaml` at startup and on `/reload`. It loads one self-contained sklearn preprocessing-plus-LightGBM pipeline, validates raw inputs, and calls its public `predict_proba()` interface. A failed startup load leaves the process live but not ready; a failed reload leaves the previously served engine unchanged. Promotion remains disabled; no registry alias is consulted.
+
+The baseline serving verification target is readiness latency below 500 ms
+while the maximum supported `/rank` batch (10,000 records) is scoring or a
+deliberately slow reload is loading a replacement. Measurements must report
+the batch size, request concurrency, Uvicorn worker count, native model thread
+count, and readiness latency distribution for the full HTTP path.
 
 ---
 

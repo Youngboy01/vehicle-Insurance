@@ -1,12 +1,15 @@
+import asyncio
 import os
 import sys
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from math import floor
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 
+import anyio
 import mlflow
 import mlflow.sklearn
 import numpy as np
@@ -157,6 +160,50 @@ CURRENT_MODEL_REFERENCE.validate()
 CURRENT_MODEL_URI = CURRENT_MODEL_REFERENCE.model_uri
 CURRENT_MODEL_ID = CURRENT_MODEL_REFERENCE.model_id
 CURRENT_MODEL_RUN_ID = CURRENT_MODEL_REFERENCE.run_id
+
+
+def _read_bounded_positive_int(
+    name: str,
+    default: int,
+    *,
+    maximum: int | None = None,
+) -> int:
+    """Read a positive serving limit while rejecting unsafe values."""
+
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a positive integer") from error
+    if value < 1 or (maximum is not None and value > maximum):
+        maximum_message = f" and at most {maximum}" if maximum is not None else ""
+        raise ValueError(
+            f"{name} must be a positive integer{maximum_message}"
+        )
+    return value
+
+
+SERVING_CPU_COUNT = os.cpu_count() or 1
+SCORING_MAX_CONCURRENCY = _read_bounded_positive_int(
+    "VEHICLE_INSURANCE_SCORING_CONCURRENCY",
+    1,
+    maximum=SERVING_CPU_COUNT,
+)
+SERVING_MODEL_THREADS = _read_bounded_positive_int(
+    "VEHICLE_INSURANCE_MODEL_THREADS",
+    1,
+    maximum=SERVING_CPU_COUNT,
+)
+
+# These limiters are deliberately process-local. A deployment using multiple
+# workers gets one model and one capacity budget per worker and must account for
+# that multiplication explicitly.
+SCORING_OPERATION_LIMITER = anyio.CapacityLimiter(SCORING_MAX_CONCURRENCY)
+RELOAD_OPERATION_LIMITER = anyio.CapacityLimiter(1)
+
+_OperationResult = TypeVar("_OperationResult")
 
 EVALUATION_METRIC_NAMES = (
     "pr_auc",
@@ -366,6 +413,12 @@ def _load_engine_from_mlflow(
             )
 
         model_step = model.named_steps["model"]
+        set_params = getattr(model_step, "set_params", None)
+        if not callable(set_params):
+            raise TypeError(
+                "Loaded model does not expose set_params for serving thread limits"
+            )
+        set_params(n_jobs=SERVING_MODEL_THREADS)
         model_classes = list(getattr(model_step, "classes_", ()))
         if model_classes != [0, 1]:
             raise ValueError(
@@ -382,12 +435,13 @@ def _load_engine_from_mlflow(
             )
         logger.info(
             "Immutable candidate model loaded: model_id=%s run_id=%s uri=%s "
-            "raw_features=%d transformed_features=%d",
+            "raw_features=%d transformed_features=%d native_threads=%d",
             model_reference.model_id,
             model_reference.run_id,
             model_reference.model_uri,
             len(raw_feature_names),
             len(transformed_feature_names),
+            SERVING_MODEL_THREADS,
         )
 
         evaluation_metrics = _extract_evaluation_metrics(run)
@@ -833,6 +887,66 @@ def _score_raw_dataframe(
     return scores
 
 
+async def _run_bounded_operation(
+    limiter: anyio.CapacityLimiter,
+    operation: Callable[..., _OperationResult],
+    args: tuple[object, ...],
+    *,
+    busy_error_code: str,
+    busy_message: str,
+) -> _OperationResult:
+    """Run one synchronous operation without queueing beyond its capacity."""
+
+    borrower = object()
+    try:
+        limiter.acquire_on_behalf_of_nowait(borrower)
+    except anyio.WouldBlock:
+        raise APIError(
+            status_code=503,
+            error_code=busy_error_code,
+            message=busy_message,
+        ) from None
+
+    released = False
+
+    def release_capacity() -> None:
+        nonlocal released
+        if not released:
+            released = True
+            limiter.release_on_behalf_of(borrower)
+
+    try:
+        # Keep the worker in a child task so cancellation of the HTTP request
+        # cannot release admission while the synchronous operation continues.
+        worker_task = asyncio.create_task(
+            anyio.to_thread.run_sync(
+                operation,
+                *args,
+                abandon_on_cancel=False,
+            )
+        )
+
+        def finish_worker(task: asyncio.Task[_OperationResult]) -> None:
+            release_capacity()
+            if not task.cancelled():
+                # Retrieve an unobserved worker exception if the request was
+                # cancelled before the child task completed.
+                task.exception()
+
+        worker_task.add_done_callback(finish_worker)
+    except BaseException:
+        release_capacity()
+        raise
+
+    try:
+        result = await asyncio.shield(worker_task)
+    except asyncio.CancelledError:
+        raise
+    else:
+        release_capacity()
+        return result
+
+
 def _resolve_top_k(
     request: RankRequest,
     total_rows: int,
@@ -871,6 +985,151 @@ def _resolve_top_k(
         else None
     )
     return requested_k, "top_k_percentage", percentage, warning
+
+
+def _build_prediction_response(
+    engine: PredictionEngine,
+    request: PredictRequest,
+) -> PredictResponse:
+    """Perform the complete synchronous single-record scoring operation."""
+
+    try:
+        validated_dataframe = _validated_scoring_dataframe([request])
+    except ScoringContractError:
+        raise
+    except Exception as error:
+        logger.exception("Unexpected prediction preparation failure: %s", error)
+        raise APIError(
+            status_code=500,
+            error_code="INTERNAL_ERROR",
+            message="The API could not prepare the prediction request.",
+        ) from error
+
+    try:
+        # Pass raw canonical features directly to the self-contained pipeline.
+        response_propensity_score = float(
+            _score_raw_dataframe(engine, validated_dataframe)[0]
+        )
+    except Exception as error:
+        logger.exception("Model inference failed during prediction: %s", error)
+        raise APIError(
+            status_code=500,
+            error_code="MODEL_INFERENCE_FAILED",
+            message="The model could not score this request.",
+        ) from error
+
+    try:
+        prediction = (
+            None
+            if engine.operating_threshold is None
+            else int(response_propensity_score >= engine.operating_threshold)
+        )
+        return PredictResponse(
+            response_propensity_score=round(response_propensity_score, 4),
+            probability=round(response_propensity_score, 4),
+            prediction=prediction,
+            operating_threshold=engine.operating_threshold,
+            model_version=engine.model_version,
+            api_timestamp=_utc_isoformat(),
+        )
+    except Exception as error:
+        logger.exception("Prediction response construction failed: %s", error)
+        raise APIError(
+            status_code=500,
+            error_code="INTERNAL_ERROR",
+            message="The API could not build the prediction response.",
+        ) from error
+
+
+def _build_rank_response(
+    engine: PredictionEngine,
+    request: RankRequest,
+) -> RankResponse:
+    """Perform validation, inference, ranking, and response construction together."""
+
+    try:
+        validated_dataframe = _validated_scoring_dataframe(request.records)
+    except ScoringContractError:
+        raise
+    except Exception as error:
+        logger.exception("Unexpected ranking preparation failure: %s", error)
+        raise APIError(
+            status_code=500,
+            error_code="INTERNAL_ERROR",
+            message="The API could not prepare the ranking request.",
+        ) from error
+
+    try:
+        scores = _score_raw_dataframe(engine, validated_dataframe)
+    except Exception as error:
+        logger.exception("Model inference failed during ranking: %s", error)
+        raise APIError(
+            status_code=500,
+            error_code="MODEL_INFERENCE_FAILED",
+            message="The model could not score this request.",
+        ) from error
+
+    try:
+        ranked_dataframe = validated_dataframe.loc[:, ["id"]].copy()
+        ranked_dataframe["response_propensity_score"] = scores
+        ranked_dataframe = ranked_dataframe.sort_values(
+            by=["response_propensity_score", "id"],
+            ascending=[False, True],
+            kind="mergesort",
+        ).reset_index(drop=True)
+
+        selected_k, capacity_type, capacity_value, capacity_warning = (
+            _resolve_top_k(request, len(ranked_dataframe))
+        )
+        selected_dataframe = ranked_dataframe.head(selected_k)
+        selected_customers = [
+            RankedCustomer(
+                id=int(customer_id),
+                rank=rank,
+                response_propensity_score=round(
+                    float(score),
+                    4,
+                ),
+            )
+            for rank, (customer_id, score) in enumerate(
+                selected_dataframe[
+                    ["id", "response_propensity_score"]
+                ].itertuples(index=False, name=None),
+                start=1,
+            )
+        ]
+
+        cutoff_score = (
+            float(selected_dataframe.iloc[-1]["response_propensity_score"])
+            if not selected_dataframe.empty
+            else None
+        )
+        return RankResponse(
+            selected_customers=selected_customers,
+            total_scored=len(ranked_dataframe),
+            selected_count=len(selected_customers),
+            capacity_type=capacity_type,
+            capacity_value=capacity_value,
+            capacity_warning=capacity_warning,
+            cutoff_score=(
+                round(cutoff_score, 4)
+                if cutoff_score is not None
+                else None
+            ),
+            model_id=engine.model_id,
+            model_uri=engine.model_uri,
+            source_run_id=engine.source_run_id,
+            model_version=engine.model_version,
+            operating_threshold=engine.operating_threshold,
+            api_timestamp=_utc_isoformat(),
+        )
+    except Exception as error:
+        logger.exception("Ranking response construction failed: %s", error)
+        raise APIError(
+            status_code=500,
+            error_code="INTERNAL_ERROR",
+            message="The API could not build the ranking response.",
+        ) from error
 
 
 @app.exception_handler(ScoringContractError)
@@ -1093,52 +1352,25 @@ async def predict(request: PredictRequest):
     if engine is None:
         raise _model_unavailable_error()
     try:
-        validated_dataframe = _validated_scoring_dataframe([request])
-    except ScoringContractError:
+        return await _run_bounded_operation(
+            SCORING_OPERATION_LIMITER,
+            _build_prediction_response,
+            (engine, request),
+            busy_error_code="SCORING_BUSY",
+            busy_message=(
+                "Scoring capacity is busy. Retry when the active operation "
+                "has completed."
+            ),
+        )
+    except (ScoringContractError, APIError):
         raise
-    except Exception as e:
-        logger.exception("Unexpected prediction preparation failure: %s", e)
+    except Exception as error:
+        logger.exception("Unexpected prediction operation failure: %s", error)
         raise APIError(
             status_code=500,
             error_code="INTERNAL_ERROR",
-            message="The API could not prepare the prediction request.",
-        ) from e
-
-    try:
-        # Pass raw canonical features directly to the self-contained pipeline.
-        response_propensity_score = float(
-            _score_raw_dataframe(engine, validated_dataframe)[0]
-        )
-    except Exception as e:
-        logger.exception("Model inference failed during prediction: %s", e)
-        raise APIError(
-            status_code=500,
-            error_code="MODEL_INFERENCE_FAILED",
-            message="The model could not score this request.",
-        ) from e
-
-    try:
-        prediction = (
-            None
-            if engine.operating_threshold is None
-            else int(response_propensity_score >= engine.operating_threshold)
-        )
-
-        return PredictResponse(
-            response_propensity_score=round(response_propensity_score, 4),
-            probability=round(response_propensity_score, 4),
-            prediction=prediction,
-            operating_threshold=engine.operating_threshold,
-            model_version=engine.model_version,
-            api_timestamp=_utc_isoformat(),
-        )
-    except Exception as e:
-        logger.exception("Prediction response construction failed: %s", e)
-        raise APIError(
-            status_code=500,
-            error_code="INTERNAL_ERROR",
-            message="The API could not build the prediction response.",
-        ) from e
+            message="The API could not complete the prediction request.",
+        ) from error
 
 
 @app.post(
@@ -1158,88 +1390,25 @@ async def rank(request: RankRequest):
     if engine is None:
         raise _model_unavailable_error()
     try:
-        validated_dataframe = _validated_scoring_dataframe(request.records)
-    except ScoringContractError:
-        raise
-    except Exception as e:
-        logger.exception("Unexpected ranking preparation failure: %s", e)
-        raise APIError(
-            status_code=500,
-            error_code="INTERNAL_ERROR",
-            message="The API could not prepare the ranking request.",
-        ) from e
-
-    try:
-        scores = _score_raw_dataframe(engine, validated_dataframe)
-    except Exception as e:
-        logger.exception("Model inference failed during ranking: %s", e)
-        raise APIError(
-            status_code=500,
-            error_code="MODEL_INFERENCE_FAILED",
-            message="The model could not score this request.",
-        ) from e
-
-    try:
-        ranked_dataframe = validated_dataframe.loc[:, ["id"]].copy()
-        ranked_dataframe["response_propensity_score"] = scores
-        ranked_dataframe = ranked_dataframe.sort_values(
-            by=["response_propensity_score", "id"],
-            ascending=[False, True],
-            kind="mergesort",
-        ).reset_index(drop=True)
-
-        selected_k, capacity_type, capacity_value, capacity_warning = (
-            _resolve_top_k(request, len(ranked_dataframe))
-        )
-        selected_dataframe = ranked_dataframe.head(selected_k)
-        selected_customers = [
-            RankedCustomer(
-                id=int(customer_id),
-                rank=rank,
-                response_propensity_score=round(
-                    float(score),
-                    4,
-                ),
-            )
-            for rank, (customer_id, score) in enumerate(
-                selected_dataframe[
-                    ["id", "response_propensity_score"]
-                ].itertuples(index=False, name=None),
-                start=1,
-            )
-        ]
-
-        cutoff_score = (
-            float(selected_dataframe.iloc[-1]["response_propensity_score"])
-            if not selected_dataframe.empty
-            else None
-        )
-        return RankResponse(
-            selected_customers=selected_customers,
-            total_scored=len(ranked_dataframe),
-            selected_count=len(selected_customers),
-            capacity_type=capacity_type,
-            capacity_value=capacity_value,
-            capacity_warning=capacity_warning,
-            cutoff_score=(
-                round(cutoff_score, 4)
-                if cutoff_score is not None
-                else None
+        return await _run_bounded_operation(
+            SCORING_OPERATION_LIMITER,
+            _build_rank_response,
+            (engine, request),
+            busy_error_code="SCORING_BUSY",
+            busy_message=(
+                "Scoring capacity is busy. Retry when the active operation "
+                "has completed."
             ),
-            model_id=engine.model_id,
-            model_uri=engine.model_uri,
-            source_run_id=engine.source_run_id,
-            model_version=engine.model_version,
-            operating_threshold=engine.operating_threshold,
-            api_timestamp=_utc_isoformat(),
         )
-    except Exception as e:
-        logger.exception("Ranking response construction failed: %s", e)
+    except (ScoringContractError, APIError):
+        raise
+    except Exception as error:
+        logger.exception("Unexpected ranking operation failure: %s", error)
         raise APIError(
             status_code=500,
             error_code="INTERNAL_ERROR",
-            message="The API could not build the ranking response.",
-        ) from e
+            message="The API could not complete the ranking request.",
+        ) from error
 
 
 def _is_temporary_model_dependency_failure(error: Exception) -> bool:
@@ -1265,8 +1434,19 @@ async def reload_model(_: None = Depends(verify_reload_token)):
     try:
         # Build and validate the complete immutable candidate engine first. The
         # currently served engine is left untouched if loading fails.
-        new_engine = _load_engine_from_mlflow()
+        new_engine = await _run_bounded_operation(
+            RELOAD_OPERATION_LIMITER,
+            _load_engine_from_mlflow,
+            (),
+            busy_error_code="RELOAD_BUSY",
+            busy_message=(
+                "A model reload is already in progress. Retry when it has "
+                "completed."
+            ),
+        )
 
+    except APIError:
+        raise
     except Exception as e:
         model_load_error = "reload_failed"
         logger.exception("/reload failed: %s", e)
