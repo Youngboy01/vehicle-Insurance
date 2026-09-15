@@ -71,6 +71,7 @@ SCHEMA_CONFIG = read_yaml_file(SCHEMA_PATH)
 MODEL_CONFIG = read_yaml_file(MODEL_SPEC_PATH)
 
 MLFLOW_TRACKING_CONFIG = MODEL_CONFIG["artifacts"]["mlflow_tracking"]
+MAX_CUSTOMER_ID = int(SCHEMA_CONFIG["identifier"]["maximum"])
 
 EXPECTED_RAW_FEATURES = tuple(
     str(feature) for feature in SCHEMA_CONFIG["features"]["canonical_order"]
@@ -490,7 +491,14 @@ def verify_reload_token(x_reload_token: str = Header(...)):
 class PredictRequest(BaseModel):
     """Customer information available before a cross-sell campaign."""
 
-    id: StrictInt
+    id: StrictInt = Field(
+        ge=1,
+        le=MAX_CUSTOMER_ID,
+        description=(
+            "Positive customer identifier in the browser-safe range "
+            f"1-{MAX_CUSTOMER_ID}."
+        ),
+    )
     Age: StrictInt
     Gender: StrictStr
     Driving_License: StrictInt
@@ -605,7 +613,7 @@ class RankRequest(BaseModel):
 class RankedCustomer(BaseModel):
     """One selected customer in deterministic campaign rank order."""
 
-    id: int
+    id: StrictInt
     rank: int
     response_propensity_score: float = Field(
         description="Uncalibrated positive-class score used for ranking."
@@ -1168,14 +1176,19 @@ async def rank(request: RankRequest):
         selected_dataframe = ranked_dataframe.head(selected_k)
         selected_customers = [
             RankedCustomer(
-                id=int(row.id),
-                rank=index + 1,
+                id=int(customer_id),
+                rank=rank,
                 response_propensity_score=round(
-                    float(row.response_propensity_score),
+                    float(score),
                     4,
                 ),
             )
-            for index, row in selected_dataframe.iterrows()
+            for rank, (customer_id, score) in enumerate(
+                selected_dataframe[
+                    ["id", "response_propensity_score"]
+                ].itertuples(index=False, name=None),
+                start=1,
+            )
         ]
 
         cutoff_score = (

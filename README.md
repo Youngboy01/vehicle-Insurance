@@ -255,7 +255,7 @@ Readiness metadata includes the immutable model ID, model URI, MLflow source run
 
 The returned score is intended for marketing prioritization. It is not a claim probability, underwriting score, price recommendation, eligibility decision, or causal estimate of whether contacting the customer will create an incremental response.
 
-Before either endpoint calls the model, the API applies the shared scoring contract in `configs/schema.yaml`: required identifiers and fields, domain/range checks, finite numeric values, allowed categories, forbidden outcome fields, exact columns, and batch ID uniqueness.
+Before either endpoint calls the model, the API applies the shared scoring contract in `configs/schema.yaml`: required identifiers and fields, domain/range checks, finite numeric values, allowed categories, forbidden outcome fields, exact columns, and batch ID uniqueness. Customer IDs must be whole numbers from `1` through `9,007,199,254,740,991`, the largest integer range represented exactly by both the Python API and browser JavaScript; larger or malformed values are rejected before scoring.
 
 All API failures use the stable JSON envelope `{"error_code": "...", "message": "...", "fields": []}`. Malformed scoring requests use `SCORING_SCHEMA_INVALID`, invalid domain values use `SCORING_VALUE_INVALID`, an unavailable serving model uses `MODEL_NOT_READY`, a failed candidate load uses `MODEL_LOAD_FAILED` or `MODEL_RELOAD_FAILED`, model execution uses `MODEL_INFERENCE_FAILED`, an unavailable MLflow/model-store dependency uses `DEPENDENCY_UNAVAILABLE`, and unexpected application failures use `INTERNAL_ERROR`. Messages are safe for clients and never contain stack traces, credentials, or customer attributes.
 
@@ -291,7 +291,7 @@ For single-customer scoring, use the values from the customer's existing custome
 
 | Field | What to enter |
 |---|---|
-| `id` | The unique customer identifier from the source system; it is used for traceability and deterministic tie-breaking, not as a model feature. |
+| `id` | The unique customer identifier from the source system, restricted to `1–9,007,199,254,740,991`; it is used for traceability and deterministic tie-breaking, not as a model feature. |
 | `Gender` | The recorded value `Male` or `Female`. |
 | `Age` | Current customer age in years, from 18 through 100. |
 | `Driving_License` | `1` when the customer has a driving license, otherwise `0`. |

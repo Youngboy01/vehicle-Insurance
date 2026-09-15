@@ -49,7 +49,7 @@
         <div class="field-guide-grid">
           <div class="field-guide-item">
             <strong>Customer ID</strong>
-            <span>Your unique customer identifier. Use the same ID used by your customer system.</span>
+            <span>Your unique customer identifier. Use the same ID used by your customer system; enter a whole number from 1 to 9,007,199,254,740,991.</span>
           </div>
           <div class="field-guide-item">
             <strong>Gender</strong>
@@ -102,7 +102,7 @@
       <div class="form-grid">
         <div class="field">
           <label for="id">Customer ID</label>
-          <input type="number" id="id" value="38113" min="1" step="1" />
+          <input type="number" id="id" value="38113" min="1" max="9007199254740991" step="1" />
         </div>
 
         <div class="field">
@@ -220,9 +220,9 @@
         <summary>Advanced input: paste customer records</summary>
         <p id="batchHelp" class="details-help">
           The current API accepts a JSON array. Each record must contain the
-          required customer ID and the ten eligible scoring fields described in
-          the field guide above. Do not include the historical response outcome
-          or other campaign results.
+          required customer ID (a whole number from 1 to 9,007,199,254,740,991)
+          and the ten eligible scoring fields described in the field guide above.
+          Do not include the historical response outcome or other campaign results.
         </p>
         <div class="field field-wide">
           <label for="batchRecords">Customer records (JSON array)</label>
@@ -386,6 +386,41 @@
     container.hidden = true;
   }
 
+  const MAX_CUSTOMER_ID = Number.MAX_SAFE_INTEGER;
+
+  function isSupportedCustomerId(id) {
+    return Number.isSafeInteger(id) && id >= 1 && id <= MAX_CUSTOMER_ID;
+  }
+
+  function parseCustomerId(rawValue) {
+    const text = String(rawValue ?? '').trim();
+    if (!/^\d+$/.test(text)) {
+      throw new Error('Customer ID must be a positive whole number.');
+    }
+
+    const id = Number(text);
+    if (!isSupportedCustomerId(id)) {
+      throw new Error(
+        'Customer ID must be between 1 and ' + MAX_CUSTOMER_ID + '.',
+      );
+    }
+    return id;
+  }
+
+  function validateBatchCustomerIds(records) {
+    const invalidIdIndex = records.findIndex(
+      (record) => !record
+        || typeof record !== 'object'
+        || !isSupportedCustomerId(record.id),
+    );
+    if (invalidIdIndex !== -1) {
+      throw new Error(
+        'Record ' + (invalidIdIndex + 1)
+        + ' has a customer ID outside the supported safe range.',
+      );
+    }
+  }
+
   function setServiceStatus(state, label) {
     document.getElementById('statusDot').className = 'status-dot ' + state;
     document.getElementById('statusText').textContent = label;
@@ -422,10 +457,24 @@
 
   async function runPredict() {
     clearApiError('predictError');
+
+    let customerId;
+    try {
+      customerId = parseCustomerId(document.getElementById('id').value);
+    } catch (e) {
+      const error = showApiError(
+        'predictError',
+        { error_code: 'CLIENT_ID_INVALID', message: e.message },
+        'Enter a valid customer ID.',
+      );
+      showToast(error.message, true);
+      return;
+    }
+
     setLoading('predictBtn', true);
 
     const payload = {
-      id:                   parseInt(document.getElementById('id').value),
+      id:                   customerId,
       Gender:               document.getElementById('Gender').value,
       Age:                  parseInt(document.getElementById('Age').value),
       Driving_License:      parseInt(document.getElementById('Driving_License').value),
@@ -566,6 +615,7 @@
       if (!Array.isArray(records) || records.length === 0) {
         throw new Error('Add a non-empty JSON array of customer records.');
       }
+      validateBatchCustomerIds(records);
     } catch (e) {
       const error = showApiError(
         'rankError',

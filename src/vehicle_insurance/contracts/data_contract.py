@@ -189,11 +189,23 @@ class DataContractValidator:
 
         for column_name in required_columns:
             if column_name == "id":
+                identifier_spec = self.contract["identifier"]
+                identifier_checks = [
+                    Check.greater_than_or_equal_to(
+                        identifier_spec["minimum"]
+                    )
+                ]
+                if "maximum" in identifier_spec:
+                    identifier_checks.append(
+                        Check.less_than_or_equal_to(
+                            identifier_spec["maximum"]
+                        )
+                    )
                 columns[column_name] = Column(
                     int,
-                    checks=Check.greater_than_or_equal_to(1),
+                    checks=identifier_checks,
                     nullable=False,
-                    unique=True,
+                    unique=bool(identifier_spec.get("unique_within_input", True)),
                 )
                 continue
 

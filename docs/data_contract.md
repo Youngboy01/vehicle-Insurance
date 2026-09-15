@@ -146,7 +146,7 @@ The following rules apply after parsing the input into a tabular representation 
 
 | Field | Type | Required | Allowed values / validation | Model role |
 |---|---|---:|---|---|
-| `id` | Integer | Yes | Positive; unique and non-null within each input dataset/batch | Identifier and deterministic tie-break only; never a feature |
+| `id` | Integer | Yes | `1–9,007,199,254,740,991` inclusive; unique and non-null within each input dataset/batch | Identifier and deterministic tie-break only; never a feature |
 | `Gender` | String | Yes | Exactly `Male` or `Female` | Categorical |
 | `Age` | Integer | Yes | Finite and initially `18–100`, inclusive | Numeric passthrough |
 | `Driving_License` | Integer | Yes | Exactly `0` or `1` | Binary passthrough |
@@ -167,7 +167,7 @@ Validation rules:
 4. Categorical values are case-sensitive and must use the documented spelling.
 5. `Region_Code` and `Policy_Sales_Channel` are categorical even though their wire representation is numeric. They must not be treated as continuous measurements.
 6. Training datasets must contain both target classes for supervised evaluation; scoring data must not contain a target column.
-7. IDs must be present, non-null, positive, and unique within the submitted dataset. Duplicate IDs make deterministic campaign selection ambiguous and are rejected.
+7. IDs must be present, non-null, whole numbers in the inclusive range `1–9,007,199,254,740,991`, and unique within the submitted dataset. This is the largest exact integer range shared by the Python API and browser JavaScript `Number` values; duplicate or out-of-range IDs make deterministic campaign selection ambiguous and are rejected.
 8. Values must not be silently clipped, rounded, recoded, or coerced into validity.
 
 ### 3.1 Range classification
@@ -179,6 +179,7 @@ The contract distinguishes fixed Phase 1 rules from observed evidence and future
 | `Age` 18–100 | General safety range | Initial project guardrail; not a universal fact about every company dataset and configurable during onboarding with evidence |
 | `Annual_Premium > 0` | Fixed structural rule | A premium cannot be zero or negative under the current feature definition; partner-specific upper bounds may be added |
 | `Vintage >= 0` | Fixed structural rule | A tenure/vintage duration cannot be negative; the partner may define an upper bound during onboarding |
+| `id` `1–9,007,199,254,740,991` | Fixed structural/browser-safe boundary | The shared Python and browser numeric contract preserves customer identity and deterministic tie-breaking without silent JavaScript rounding |
 | `Region_Code >= 0` and finite | Fixed structural rule plus partner domain | The value must be a valid finite non-negative category; the accepted code set is source/partner-specific |
 | `Policy_Sales_Channel > 0` and finite | Fixed structural rule plus partner domain | The value must be a valid finite positive category; the accepted code set is source/partner-specific |
 | Current dataset min/max values | Benchmark-observed evidence | Measured from the exact MongoDB snapshot used for the run; not automatically a universal production limit |

@@ -51,6 +51,7 @@ identifier:
   type: integer
   required: true
   minimum: 1
+  maximum: 9007199254740991
   unique_within_input: true
   predictive_feature: false
   use_for_tie_breaking: true

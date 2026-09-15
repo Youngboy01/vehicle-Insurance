@@ -104,7 +104,7 @@ The benchmark should not be presented as proof of production performance. It is 
 
 | Feature | Role | Notes |
 |---|---|---|
-| `id` | Identifier | Dropped before training; uniqueness should be validated |
+| `id` | Identifier | Dropped before training; unique positive integer in the browser-safe range `1–9,007,199,254,740,991` |
 | `Gender` | Feature | Categorical value |
 | `Age` | Feature | Numeric customer age |
 | `Driving_License` | Feature | Binary indicator |
