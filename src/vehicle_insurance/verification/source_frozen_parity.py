@@ -47,6 +47,12 @@ from vehicle_insurance.constants import (
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
 from vehicle_insurance.utils import load_object, read_yaml_file
+from vehicle_insurance.utils.report_output import (
+    protected_artifact_paths,
+    resolve_report_path,
+    validate_report_destination,
+    write_json_atomic,
+)
 from vehicle_insurance.utils.source_manifest import validate_source_manifest
 
 logger = setup_logger()
@@ -96,11 +102,14 @@ class SourceFrozenParityCertification:
         self.source_manifest_path = self.source_data_path.with_name(
             "source_manifest.json"
         )
-        self.report_path = Path(report_path).resolve() if report_path else (
-            self.candidate_artifact_dir
+        self.report_path_input = (
+            Path(report_path).expanduser()
+            if report_path
+            else self.candidate_artifact_dir
             / "source_frozen_parity"
             / "parity_report.json"
         )
+        self.report_path = self.report_path_input.resolve(strict=False)
         self.prediction_tolerance = self._positive_finite(
             prediction_tolerance,
             "prediction_tolerance",
@@ -227,6 +236,84 @@ class SourceFrozenParityCertification:
         if not getattr(self, "apply_lineage", False):
             return "audit_only"
         return "local_and_mlflow" if getattr(self, "log_mlflow_evidence", False) else "local_only"
+
+    def _report_destination_policy(self) -> tuple[Path, tuple[Path, ...]]:
+        """Return a validated parity destination and protected-input set."""
+
+        canonical_certificate = (
+            self.candidate_artifact_dir
+            / "source_frozen_parity"
+            / "parity_report.json"
+        )
+        parity_evidence = (
+            self.candidate_lineage.get("source_frozen_parity")
+            if isinstance(getattr(self, "candidate_lineage", None), dict)
+            else None
+        )
+        extra_paths: list[Path] = [
+            path
+            for path in (
+                getattr(self, "source_data_path", None),
+                getattr(self, "source_manifest_path", None),
+            )
+            if path is not None
+        ]
+        if isinstance(parity_evidence, dict):
+            certificate_path = parity_evidence.get("certificate_report_path")
+            if isinstance(certificate_path, str) and certificate_path:
+                certificate = Path(certificate_path).expanduser()
+                extra_paths.append(
+                    certificate
+                    if certificate.is_absolute()
+                    else self.candidate_artifact_dir / certificate
+                )
+        protected = list(
+            protected_artifact_paths(
+                self.candidate_artifact_dir,
+                extra_paths=extra_paths,
+            )
+        )
+        # The canonical parity certificate is this writer's own transactional
+        # output. It is safe to replace it, while every other protected input
+        # remains non-overwritable.
+        if resolve_report_path(self.report_path) == resolve_report_path(
+            canonical_certificate
+        ):
+            protected = [
+                path
+                for path in protected
+                if resolve_report_path(path) != resolve_report_path(
+                    canonical_certificate
+                )
+            ]
+        destination = getattr(self, "report_path_input", self.report_path)
+        target = validate_report_destination(
+            destination,
+            protected_paths=protected,
+        )
+        return target, tuple(protected)
+
+    def _validate_report_destination(self) -> Path:
+        return self._report_destination_policy()[0]
+
+    def _metrics_destination_policy(self) -> tuple[Path, tuple[Path, ...]]:
+        """Return the canonical metrics output and protected-input set."""
+
+        metrics_path = self.candidate_artifact_dir / "model_trainer" / "metrics.json"
+        protected = list(protected_artifact_paths(self.candidate_artifact_dir))
+        # Metrics are this transaction's owned state output. Only the exact
+        # canonical entry is exempted; a symlink/hard-link alias to another
+        # protected artifact is still rejected by the shared validator.
+        protected = [
+            path
+            for path in protected
+            if resolve_report_path(path) != resolve_report_path(metrics_path)
+        ]
+        target = validate_report_destination(
+            metrics_path,
+            protected_paths=protected,
+        )
+        return target, tuple(protected)
 
     def _run_stage(
         self,
@@ -998,15 +1085,12 @@ class SourceFrozenParityCertification:
         }
 
     def _write_report(self, report: dict[str, Any]) -> None:
-        self.report_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = self.report_path.with_suffix(
-            self.report_path.suffix + ".tmp"
+        target, protected_paths = self._report_destination_policy()
+        write_json_atomic(
+            target,
+            report,
+            protected_paths=protected_paths,
         )
-        with temporary_path.open("w", encoding="utf-8", newline="\n") as file:
-            json.dump(report, file, indent=2, default=str)
-            file.flush()
-            os.fsync(file.fileno())
-        temporary_path.replace(self.report_path)
         logger.info("Source-frozen parity report saved to %s", self.report_path)
 
     def _apply_local_lineage(
@@ -1110,12 +1194,12 @@ class SourceFrozenParityCertification:
         }
         lineage["source_frozen_parity"] = evidence
         payload["lineage"] = lineage
-        temporary_path = metrics_path.with_suffix(metrics_path.suffix + ".tmp")
-        with temporary_path.open("w", encoding="utf-8", newline="\n") as file:
-            json.dump(payload, file, indent=2, default=str)
-            file.flush()
-            os.fsync(file.fileno())
-        temporary_path.replace(metrics_path)
+        metrics_target, protected_paths = self._metrics_destination_policy()
+        write_json_atomic(
+            metrics_target,
+            payload,
+            protected_paths=protected_paths,
+        )
         report["lineage_recording"]["local_metrics_json_updated"] = True
         logger.info("Local candidate lineage updated at %s", metrics_path)
 
@@ -1186,6 +1270,9 @@ class SourceFrozenParityCertification:
     def run(self) -> dict[str, Any]:
         """Run certification and return the machine-readable report."""
         load_dotenv(override=False)
+        # Reject a dangerous destination before reading candidate inputs or
+        # contacting MLflow. Later writes revalidate after lineage discovery.
+        self._validate_report_destination()
         self._run_stage("configuration", self._validate_configuration)
         if not self.errors:
             self._run_stage("candidate_artifact_loading", self._load_candidate_artifacts)

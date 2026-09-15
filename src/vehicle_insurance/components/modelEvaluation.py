@@ -24,6 +24,12 @@ from vehicle_insurance.entities.config_entity import ModelEvaluationConfig
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
 from vehicle_insurance.utils import get_mlflow_client, read_yaml_file
+from vehicle_insurance.utils.report_output import (
+    protected_artifact_paths,
+    resolve_report_path,
+    validate_report_destination,
+    write_json_atomic,
+)
 from vehicle_insurance.utils.source_manifest import validate_source_manifest
 
 logger = setup_logger()
@@ -76,6 +82,7 @@ class ModelEvaluation:
             ):
                 raise TypeError("evaluation_context must be a dictionary when provided")
             self.evaluation_context = dict(evaluation_context or {"mode": "pipeline"})
+            self._validate_report_destination()
             self.model_spec = read_yaml_file(MODEL_SPEC_FILE_PATH)
             self.schema_config = read_yaml_file(SCHEMA_FILE_PATH)
             self._validate_policy()
@@ -90,6 +97,79 @@ class ModelEvaluation:
                 self.require_champion_comparison = require_champion_comparison
         except Exception as error:
             raise VehicleInsuranceException(error, sys) from error
+
+    def _candidate_artifact_root(self) -> Path:
+        """Resolve the candidate root from the persisted trainer metrics path."""
+
+        for field_name in ("trained_model_file_path", "metrics_file_path"):
+            artifact_path = Path(
+                str(getattr(self.model_trainer_artifact, field_name, ""))
+            ).expanduser().resolve(strict=False)
+            trainer_directory = artifact_path.parent
+            if trainer_directory.name.casefold() == "model_trainer":
+                return trainer_directory.parent
+
+        metrics_path = Path(
+            str(getattr(self.model_trainer_artifact, "metrics_file_path", ""))
+        ).expanduser().resolve(strict=False)
+        return metrics_path.parent
+
+    def _report_destination_policy(self) -> tuple[Path, tuple[Path, ...], bool]:
+        """Return a validated report path and its overwrite policy."""
+
+        candidate_root = self._candidate_artifact_root()
+        metrics_path = Path(
+            str(getattr(self.model_trainer_artifact, "metrics_file_path", ""))
+        ).expanduser().resolve(strict=False)
+        model_path = Path(
+            str(getattr(self.model_trainer_artifact, "trained_model_file_path", ""))
+        ).expanduser().resolve(strict=False)
+        parity_lineage = getattr(self.model_trainer_artifact, "lineage", {})
+        parity_evidence = (
+            parity_lineage.get("source_frozen_parity")
+            if isinstance(parity_lineage, dict)
+            else None
+        )
+        extra_paths: list[Path] = [metrics_path, model_path]
+        if isinstance(parity_evidence, dict):
+            certificate_path = parity_evidence.get("certificate_report_path")
+            if isinstance(certificate_path, str) and certificate_path:
+                certificate = Path(certificate_path).expanduser()
+                extra_paths.append(
+                    certificate
+                    if certificate.is_absolute()
+                    else candidate_root / certificate
+                )
+
+        protected = list(
+            protected_artifact_paths(candidate_root, extra_paths=extra_paths)
+        )
+        destination = Path(
+            str(self.model_evaluation_config.report_file_path)
+        ).expanduser()
+        replay_mode = str(self.evaluation_context.get("mode", "pipeline")) == "replay"
+        canonical_decision_report = candidate_root / "model_evaluation" / "report.json"
+        # The normal evaluator owns this one ordinary report and may replace
+        # it. Any other protected evidence remains non-overwritable.
+        if not replay_mode and resolve_report_path(destination) == resolve_report_path(
+            canonical_decision_report
+        ):
+            protected = [
+                path
+                for path in protected
+                if resolve_report_path(path) != resolve_report_path(
+                    canonical_decision_report
+                )
+            ]
+        target = validate_report_destination(
+            destination,
+            protected_paths=protected,
+            require_new=replay_mode,
+        )
+        return target, tuple(protected), replay_mode
+
+    def _validate_report_destination(self) -> Path:
+        return self._report_destination_policy()[0]
 
     def _validate_policy(self) -> None:
         if self.model_spec.get("contract_version") != str(
@@ -950,16 +1030,15 @@ class ModelEvaluation:
 
     def _save_report(self, report: dict) -> None:
         try:
-            report_directory = os.path.dirname(
-                self.model_evaluation_config.report_file_path
-            ) or "."
-            os.makedirs(report_directory, exist_ok=True)
-            with open(
-                self.model_evaluation_config.report_file_path,
-                "w",
-                encoding="utf-8",
-            ) as report_file:
-                json.dump(report, report_file, indent=2, default=str)
+            destination, protected_paths, replay_mode = (
+                self._report_destination_policy()
+            )
+            write_json_atomic(
+                destination,
+                report,
+                protected_paths=protected_paths,
+                require_new=replay_mode,
+            )
             logger.info(
                 "Model evaluation report saved to %s",
                 self.model_evaluation_config.report_file_path,

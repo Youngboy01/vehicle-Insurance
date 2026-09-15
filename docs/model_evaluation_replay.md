@@ -112,6 +112,15 @@ identity, and requires `recording_state: "complete"`. The configured
 the release policy requires `local_and_mlflow`, including when the remote
 artifact was logged but its tags were only partially recorded.
 
+Replay output is treated as a new immutable record. The destination is
+validated before the candidate is loaded and must not exist already; this
+protects the model, metrics, source snapshots/manifests, parity certificate,
+original decision report, and any same-file symlink or hard-link alias. The
+default `model_evaluation/replay_report.json` therefore cannot be reused for a
+second invocation; choose a new filename for each replay. Report serialization
+uses a unique exclusively-created temporary file and atomic replacement, so a
+pre-existing `<destination>.tmp` entry is never opened or truncated.
+
 ## When to run replay
 
 Run replay after applying reviewed lineage/parity evidence to an existing

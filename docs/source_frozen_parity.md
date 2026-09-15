@@ -103,6 +103,17 @@ and `local_and_mlflow`. The release policy in `configs/model_spec.yaml`
 requires `local_and_mlflow`; a local-only audit can be useful for diagnosis but
 cannot satisfy release readiness.
 
+The parity report destination is validated before candidate inputs are read.
+Model, metrics, source snapshots/manifests, decision reports, and existing
+non-canonical certificates (including symlink and hard-link aliases) are
+protected. The canonical
+`source_frozen_parity/parity_report.json` is the transaction's explicitly
+owned output and may be replaced for its pending/final/failed states; other
+existing report files are replaceable only when they are ordinary, unaliased
+report files. Every write uses a fresh exclusively-created temporary file and
+atomic replacement, so a predictable `<destination>.tmp` file or link is never
+truncated.
+
 The formal pipeline supplies both options automatically. Any local write,
 remote log/tag, final certificate write, or process interruption leaves
 `pending`/`failed` persisted evidence (or an unreadable artifact), and replay

@@ -37,6 +37,10 @@ from vehicle_insurance.entities.artifact_entity import ModelEvaluationArtifact, 
 from vehicle_insurance.entities.config_entity import ModelEvaluationConfig
 from vehicle_insurance.exceptions.handle_exception import VehicleInsuranceException
 from vehicle_insurance.logger.logger_config import setup_logger
+from vehicle_insurance.utils.report_output import (
+    protected_artifact_paths,
+    validate_report_destination,
+)
 
 logger = setup_logger()
 
@@ -67,6 +71,51 @@ def _resolve_repository_path(path_value: str | os.PathLike[str]) -> Path:
     if not path.is_absolute():
         path = REPOSITORY_ROOT / path
     return path.resolve()
+
+
+def _resolve_report_argument(path_value: str | os.PathLike[str]) -> Path:
+    """Resolve a report argument against the repository without following links."""
+
+    path = Path(path_value).expanduser()
+    if not path.is_absolute():
+        path = REPOSITORY_ROOT / path
+    return path
+
+
+def _replay_protected_paths(
+    candidate_root: Path,
+    lineage: Mapping[str, Any] | None = None,
+) -> tuple[Path, ...]:
+    """Return replay inputs/evidence that an output must never replace."""
+
+    extra_paths: list[Path] = []
+    if isinstance(lineage, Mapping):
+        parity_evidence = lineage.get("source_frozen_parity")
+        if isinstance(parity_evidence, Mapping):
+            certificate_path = parity_evidence.get("certificate_report_path")
+            if isinstance(certificate_path, str) and certificate_path:
+                certificate = Path(certificate_path).expanduser()
+                extra_paths.append(
+                    certificate
+                    if certificate.is_absolute()
+                    else candidate_root / certificate
+                )
+    return protected_artifact_paths(candidate_root, extra_paths=extra_paths)
+
+
+def _validate_replay_report_destination(
+    candidate_root: Path,
+    destination: Path,
+    *,
+    lineage: Mapping[str, Any] | None = None,
+) -> Path:
+    """Reject protected aliases and existing outputs before replay work."""
+
+    return validate_report_destination(
+        destination,
+        protected_paths=_replay_protected_paths(candidate_root, lineage),
+        require_new=True,
+    )
 
 
 def _read_json_object(file_path: Path) -> dict[str, Any]:
@@ -242,16 +291,28 @@ def replay_model_evaluation(
 
     try:
         candidate_root = _resolve_repository_path(candidate_artifact_dir)
+        if report_file_path is None:
+            output_report_path = candidate_root / DEFAULT_REPLAY_REPORT_RELATIVE_PATH
+        else:
+            output_report_path = _resolve_report_argument(report_file_path)
+
+        # Validate the caller-controlled destination before loading the model,
+        # metrics, source snapshots, or any evaluator state. A second pass
+        # below adds a certificate path supplied by persisted lineage.
+        output_report_path = _validate_replay_report_destination(
+            candidate_root,
+            output_report_path,
+        )
         candidate_artifact = load_model_trainer_artifact(candidate_root)
+        output_report_path = _validate_replay_report_destination(
+            candidate_root,
+            output_report_path,
+            lineage=candidate_artifact.lineage,
+        )
         evaluation_context = _build_evaluation_context(
             candidate_root,
             candidate_artifact,
         )
-        if report_file_path is None:
-            output_report_path = candidate_root / DEFAULT_REPLAY_REPORT_RELATIVE_PATH
-        else:
-            output_report_path = _resolve_repository_path(report_file_path)
-        output_report_path.parent.mkdir(parents=True, exist_ok=True)
 
         evaluator = ModelEvaluation(
             model_evaluation_config=ModelEvaluationConfig(
