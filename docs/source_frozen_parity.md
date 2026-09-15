@@ -108,11 +108,14 @@ Model, metrics, source snapshots/manifests, decision reports, and existing
 non-canonical certificates (including symlink and hard-link aliases) are
 protected. The canonical
 `source_frozen_parity/parity_report.json` is the transaction's explicitly
-owned output and may be replaced for its pending/final/failed states; other
-existing report files are replaceable only when they are ordinary, unaliased
-report files. Every write uses a fresh exclusively-created temporary file and
-atomic replacement, so a predictable `<destination>.tmp` file or link is never
-truncated.
+owned output and may be replaced for its pending/final/failed states. A fresh
+custom certificate path is claimed by the current attempt on its first
+validation, so that attempt can publish pending/final/failed states there while
+pre-existing evidence remains protected. Other existing report files are
+replaceable only when they are ordinary, unaliased report files. Every write
+uses a fresh exclusively-created temporary file; replaceable reports use
+atomic replacement, while fresh-only reports use an atomic no-replace publish
+so a competing writer cannot be overwritten.
 
 The formal pipeline supplies both options automatically. Any local write,
 remote log/tag, final certificate write, or process interruption leaves

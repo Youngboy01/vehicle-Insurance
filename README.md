@@ -359,8 +359,11 @@ Replay reports are fresh records: destinations are checked before artifact
 loading and cannot overwrite model, metrics, snapshots/manifests, parity
 certificates, the original decision report, or link aliases. The default
 `model_evaluation/replay_report.json` must be given a new filename for each
-replay. Parity and evaluation report writes use unique exclusive temporary
-files and atomic replacement.
+replay. Report writes use unique exclusive temporary files; fresh replay
+reports use atomic no-replace publication, while explicitly replaceable
+ordinary reports retain atomic replacement. The dashboard validates raw batch
+ID tokens before `JSON.parse`, so fractional or exponent forms cannot round
+into a different safe integer.
 
 Run this command from the repository root. The public module entry point executes ingestion, validation, transformation, model training, source-frozen parity, and final evaluation in sequence. It saves raw data, splits, transformed arrays, preprocessor, trained model, metrics, parity certificate, evaluation report, and lineage under a unique `artifact\<run-directory>` directory. Promotion remains disabled until the evaluation policy, source-frozen parity, segment review, and owner approval gates are complete. Stage-level benchmark helpers, if used during local development, are not part of the public release workflow.
 

@@ -118,8 +118,10 @@ protects the model, metrics, source snapshots/manifests, parity certificate,
 original decision report, and any same-file symlink or hard-link alias. The
 default `model_evaluation/replay_report.json` therefore cannot be reused for a
 second invocation; choose a new filename for each replay. Report serialization
-uses a unique exclusively-created temporary file and atomic replacement, so a
-pre-existing `<destination>.tmp` entry is never opened or truncated.
+uses a unique exclusively-created temporary file and an atomic no-replace
+publication, so a competing replay cannot overwrite an already-created
+destination and a pre-existing `<destination>.tmp` entry is never opened or
+truncated.
 
 ## When to run replay
 

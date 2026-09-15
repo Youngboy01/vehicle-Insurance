@@ -172,7 +172,12 @@ def write_json_atomic(
     protected_paths: Iterable[str | os.PathLike[str]] = (),
     require_new: bool = False,
 ) -> Path:
-    """Serialize JSON through a unique exclusive temporary file and replace."""
+    """Serialize JSON atomically, optionally refusing an existing destination.
+
+    ``require_new`` publishes the completed temporary file with an atomic hard
+    link. A competing creator therefore receives an existence error instead of
+    being replaced by ``os.replace``.
+    """
 
     protected = tuple(protected_paths)
     target = validate_report_destination(
@@ -201,14 +206,24 @@ def write_json_atomic(
             report_file.flush()
             os.fsync(report_file.fileno())
 
-        # Recheck link/protected-file state after serialization. ``os.replace``
-        # replaces the destination entry rather than following a symlink.
+        # Recheck link/protected-file state after serialization. The final
+        # publication is still race-safe: require_new uses an atomic no-replace
+        # link, while explicitly replaceable reports retain os.replace.
         validate_report_destination(
             target,
             protected_paths=protected,
             require_new=require_new,
         )
-        os.replace(temporary_path, target)
+        if require_new:
+            try:
+                os.link(temporary_path, target)
+            except FileExistsError as error:
+                raise ReportDestinationError(
+                    f"Report destination was created concurrently: {target}"
+                ) from error
+            temporary_path.unlink()
+        else:
+            os.replace(temporary_path, target)
         temporary_path = None
         return target
     except Exception:

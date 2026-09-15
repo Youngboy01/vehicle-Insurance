@@ -407,6 +407,82 @@
     return id;
   }
 
+  function validateRawBatchCustomerIds(rawText) {
+    // JSON.parse has already rounded numeric tokens by the time a reviver runs.
+    let index = 0;
+    while (index < rawText.length) {
+      if (rawText[index] !== '"') {
+        index += 1;
+        continue;
+      }
+
+      const keyStart = index;
+      index += 1;
+      let escaped = false;
+      while (index < rawText.length) {
+        const character = rawText[index];
+        if (escaped) {
+          escaped = false;
+          index += 1;
+          continue;
+        }
+        if (character === '\\') {
+          escaped = true;
+          index += 1;
+          continue;
+        }
+        if (character === '"') break;
+        index += 1;
+      }
+      if (index >= rawText.length) return;
+
+      let key;
+      try {
+        key = JSON.parse(rawText.slice(keyStart, index + 1));
+      } catch (_) {
+        index += 1;
+        continue;
+      }
+      index += 1;
+      if (key !== 'id') continue;
+
+      while (index < rawText.length && /\s/.test(rawText[index])) index += 1;
+      if (rawText[index] !== ':') continue;
+      index += 1;
+      while (index < rawText.length && /\s/.test(rawText[index])) index += 1;
+
+      const firstCharacter = rawText[index];
+      if (
+        firstCharacter === '"'
+        || firstCharacter === '{'
+        || firstCharacter === '['
+        || firstCharacter === 't'
+        || firstCharacter === 'f'
+        || firstCharacter === 'n'
+      ) {
+        continue;
+      }
+      if (firstCharacter === '-'
+        || firstCharacter === '.'
+        || /\d/.test(firstCharacter)) {
+        const tokenStart = index;
+        while (
+          index < rawText.length
+          && !',]} \t\r\n'.includes(rawText[index])
+        ) {
+          index += 1;
+        }
+        const token = rawText.slice(tokenStart, index);
+        if (!/^\d+$/.test(token)) {
+          throw new Error(
+            'Customer ID values must be whole-number JSON values; '
+            + 'fractional and exponent forms are not supported.',
+          );
+        }
+      }
+    }
+  }
+
   function validateBatchCustomerIds(records) {
     const invalidIdIndex = records.findIndex(
       (record) => !record
@@ -611,7 +687,9 @@
 
     let records;
     try {
-      records = JSON.parse(document.getElementById('batchRecords').value);
+      const rawRecords = document.getElementById('batchRecords').value;
+      validateRawBatchCustomerIds(rawRecords);
+      records = JSON.parse(rawRecords);
       if (!Array.isArray(records) || records.length === 0) {
         throw new Error('Add a non-empty JSON array of customer records.');
       }

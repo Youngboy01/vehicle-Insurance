@@ -121,6 +121,7 @@ class SourceFrozenParityCertification:
         self.apply_lineage = apply_lineage
         self.log_mlflow_evidence = log_mlflow_evidence
         self.certification_attempt_id = uuid4().hex
+        self._report_destination_owned_path: Path | None = None
 
         self.errors: list[dict[str, Any]] = []
         self.warnings: list[dict[str, Any]] = []
@@ -237,7 +238,11 @@ class SourceFrozenParityCertification:
             return "audit_only"
         return "local_and_mlflow" if getattr(self, "log_mlflow_evidence", False) else "local_only"
 
-    def _report_destination_policy(self) -> tuple[Path, tuple[Path, ...]]:
+    def _report_destination_policy(
+        self,
+        *,
+        claim_destination: bool = False,
+    ) -> tuple[Path, tuple[Path, ...]]:
         """Return a validated parity destination and protected-input set."""
 
         canonical_certificate = (
@@ -274,27 +279,40 @@ class SourceFrozenParityCertification:
             )
         )
         # The canonical parity certificate is this writer's own transactional
-        # output. It is safe to replace it, while every other protected input
-        # remains non-overwritable.
-        if resolve_report_path(self.report_path) == resolve_report_path(
+        # output. A fresh custom destination becomes owned only after its first
+        # validation; bind that exemption to the exact path claimed by this
+        # attempt so a later path mutation cannot unprotect another file.
+        destination = getattr(self, "report_path_input", self.report_path)
+        destination_resolved = resolve_report_path(destination)
+        owned_destination = getattr(self, "_report_destination_owned_path", None)
+        owned_destination_resolved = (
+            resolve_report_path(owned_destination)
+            if owned_destination is not None
+            else None
+        )
+        is_owned_destination = destination_resolved == owned_destination_resolved
+        is_canonical_destination = destination_resolved == resolve_report_path(
             canonical_certificate
-        ):
+        )
+        if is_owned_destination or is_canonical_destination:
+            exempt_destination = (
+                owned_destination if is_owned_destination else canonical_certificate
+            )
             protected = [
                 path
                 for path in protected
-                if resolve_report_path(path) != resolve_report_path(
-                    canonical_certificate
-                )
+                if resolve_report_path(path) != resolve_report_path(exempt_destination)
             ]
-        destination = getattr(self, "report_path_input", self.report_path)
         target = validate_report_destination(
             destination,
             protected_paths=protected,
         )
+        if claim_destination:
+            self._report_destination_owned_path = target
         return target, tuple(protected)
 
     def _validate_report_destination(self) -> Path:
-        return self._report_destination_policy()[0]
+        return self._report_destination_policy(claim_destination=True)[0]
 
     def _metrics_destination_policy(self) -> tuple[Path, tuple[Path, ...]]:
         """Return the canonical metrics output and protected-input set."""
@@ -1085,7 +1103,9 @@ class SourceFrozenParityCertification:
         }
 
     def _write_report(self, report: dict[str, Any]) -> None:
-        target, protected_paths = self._report_destination_policy()
+        target, protected_paths = self._report_destination_policy(
+            claim_destination=True
+        )
         write_json_atomic(
             target,
             report,
