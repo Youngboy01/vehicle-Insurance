@@ -439,6 +439,15 @@ deliberately slow reload is loading a replacement. Measurements must report
 the batch size, request concurrency, Uvicorn worker count, native model thread
 count, and readiness latency distribution for the full HTTP path.
 
+The local one-worker measurement completed on 2026-09-19 with the configured
+candidate pipeline, one active scoring operation, and one native model thread.
+It submitted 10,000 valid records and selected all 10,000 customers. During
+the real HTTP request, 337 readiness probes all succeeded: p50 was 30.587 ms,
+p95 100.113 ms, p99 161.900 ms, and maximum 163.846 ms, with no timeouts or
+connection failures. The rank request took 1,073.827 ms end to end and the
+scoring worker took 901.498 ms; the response was 588,242 bytes. This is a
+repeatable local verification result, not a production-wide latency SLO.
+
 ---
 
 ## 🐳 Docker
