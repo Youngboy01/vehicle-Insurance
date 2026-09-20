@@ -439,14 +439,18 @@ deliberately slow reload is loading a replacement. Measurements must report
 the batch size, request concurrency, Uvicorn worker count, native model thread
 count, and readiness latency distribution for the full HTTP path.
 
-The local one-worker measurement completed on 2026-09-19 with the configured
-candidate pipeline, one active scoring operation, and one native model thread.
-It submitted 10,000 valid records and selected all 10,000 customers. During
-the real HTTP request, 337 readiness probes all succeeded: p50 was 30.587 ms,
-p95 100.113 ms, p99 161.900 ms, and maximum 163.846 ms, with no timeouts or
-connection failures. The rank request took 1,073.827 ms end to end and the
-scoring worker took 901.498 ms; the response was 588,242 bytes. This is a
-repeatable local verification result, not a production-wide latency SLO.
+The exact-loader one-worker measurement completed on 2026-09-20 with the
+production `_load_engine_from_mlflow()` path, one active scoring operation,
+and one native model thread. MLflow loaded model
+`m-e339c348e27d400d835b8e8bdf8fdbe1` from run
+`0a5a3eb264464111ad86075bd811531d` in 9,766.429 ms, matching the immutable
+configuration. The HTTP run submitted 10,000 valid records and selected all
+10,000 customers. During scoring, 322 readiness probes all succeeded: p50 was
+34.087 ms, p95 71.936 ms, p99 79.991 ms, and maximum 81.350 ms, with no
+timeouts or connection failures. The rank request took 937.232 ms end to end
+and the scoring worker took 834.426 ms; the response was 588,242 bytes. This
+is a repeatable local verification result, not a production-wide latency
+SLO; MLflow load time is reported separately from per-request scoring.
 
 ---
 
