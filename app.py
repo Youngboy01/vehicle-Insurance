@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import os
 import sys
 from collections.abc import Callable
@@ -23,7 +24,6 @@ from fastapi import (
     HTTPException,
     Request,
 )
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -507,14 +507,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 STATIC_PATH = APPLICATION_ROOT / "static"
 TEMPLATES_PATH = APPLICATION_ROOT / "templates"
 app.mount("/static", StaticFiles(directory=str(STATIC_PATH)), name="static")
@@ -542,7 +534,7 @@ def verify_reload_token(x_reload_token: str = Header(...)):
             error_code="INTERNAL_ERROR",
             message="The reload operation is not configured on the server.",
         )
-    if x_reload_token != expected:
+    if not hmac.compare_digest(x_reload_token, expected):
         raise APIError(
             status_code=401,
             error_code="AUTHENTICATION_FAILED",

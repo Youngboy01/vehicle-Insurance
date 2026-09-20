@@ -280,7 +280,7 @@ The model card should be updated before a model is promoted to a materially diff
 
 - Keep the self-contained final pipeline as the serving artifact.
 - Align the orchestrated pipeline with the evaluation result and disabled-promotion policy.
-- Application-level body/field limits and bounded scoring checks are now implemented and tested. Before public deployment, add authentication, edge rate limiting, gateway body/request timeouts, and container-level liveness/readiness verification through the selected deployment layer.
+- Application-level body/field limits and bounded scoring checks are now implemented and tested. The same-origin dashboard does not require CORS, and `/reload` uses a server-side token with constant-time comparison. Before public deployment, protect the administrative route with HTTPS/private access, add edge rate limiting and gateway body/request timeouts, and verify container liveness/readiness through the selected deployment layer. Reload state is process-local; multi-worker or multi-instance serving requires a coordinated image/deployment rollout rather than one process's reload request.
 - Move training into a separate durable job or workflow.
 - Add monitoring, rollback, and complete model-version lineage.
 

@@ -220,6 +220,20 @@ Base URL: `http://localhost:8080`
 
 Training is intentionally not exposed through the public FastAPI service. A future CI/CD workflow or dedicated training job will invoke `python -m vehicle_insurance.pipeline.training_pipeline` outside the web process, publish an evaluated candidate, and use the controlled release/reload path when approved.
 
+The dashboard is same-origin with this API, so the application intentionally
+does not enable cross-origin resource sharing (CORS). CORS is not an
+authentication mechanism; if a separate frontend is introduced, replace this
+same-origin policy with an explicit allowlist of approved origins rather than a
+wildcard credentialed policy.
+
+`/reload` is an administrative operation. It requires the server-side
+`X-Reload-Token` value over a deployment-protected HTTPS/private administrative
+route; the token must never be placed in dashboard JavaScript, browser storage,
+or any other client code. The current required-header contract returns `422`
+when the header is absent and `401` when it is present but incorrect. The token
+comparison is constant-time, but deployment-level TLS, access control, and
+rate limiting are still required.
+
 **Example `/predict` request:**
 ```json
 {
@@ -433,7 +447,10 @@ uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 
 Use one Uvicorn worker without `--reload` for the baseline serving-capacity
 verification; development reloaders and additional workers create separate
-process-local models and capacity limiters.
+process-local models and capacity limiters. A reload updates only the process
+that receives it, so it is not a fleet-wide rollout mechanism. If a multi-worker
+or multi-instance deployment is selected later, use a coordinated image or
+deployment rollout so every process starts with the same approved model.
 
 Then visit:
 - `http://localhost:8080` — dashboard UI
