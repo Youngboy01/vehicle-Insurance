@@ -257,7 +257,7 @@ The returned score is intended for marketing prioritization. It is not a claim p
 
 Before either endpoint calls the model, the API applies the shared scoring contract in `configs/schema.yaml`: required identifiers and fields, domain/range checks, finite numeric values, allowed categories, forbidden outcome fields, exact columns, and batch ID uniqueness. Customer IDs must be whole numbers from `1` through `9,007,199,254,740,991`, the largest integer range represented exactly by both the Python API and browser JavaScript; larger or malformed values are rejected before scoring.
 
-All API failures use the stable JSON envelope `{"error_code": "...", "message": "...", "fields": []}`. Malformed scoring requests use `SCORING_SCHEMA_INVALID`, invalid domain values use `SCORING_VALUE_INVALID`, a saturated scoring limiter uses `SCORING_BUSY`, an unavailable serving model uses `MODEL_NOT_READY`, a failed candidate load uses `MODEL_LOAD_FAILED` or `MODEL_RELOAD_FAILED`, a concurrent reload uses `RELOAD_BUSY`, model execution uses `MODEL_INFERENCE_FAILED`, an unavailable MLflow/model-store dependency uses `DEPENDENCY_UNAVAILABLE`, and unexpected application failures use `INTERNAL_ERROR`. Messages are safe for clients and never contain stack traces, credentials, or customer attributes.
+All API failures use the stable JSON envelope `{"error_code": "...", "message": "...", "fields": []}`. An oversized HTTP body uses `REQUEST_BODY_TOO_LARGE`; malformed scoring requests use `SCORING_SCHEMA_INVALID`, invalid domain values use `SCORING_VALUE_INVALID`, a saturated scoring limiter uses `SCORING_BUSY`, an unavailable serving model uses `MODEL_NOT_READY`, a failed candidate load uses `MODEL_LOAD_FAILED` or `MODEL_RELOAD_FAILED`, a concurrent reload uses `RELOAD_BUSY`, model execution uses `MODEL_INFERENCE_FAILED`, an unavailable MLflow/model-store dependency uses `DEPENDENCY_UNAVAILABLE`, and unexpected application failures use `INTERNAL_ERROR`. Messages are safe for clients and never contain stack traces, credentials, or customer attributes.
 
 **Example `/rank` request:**
 ```json
@@ -342,6 +342,7 @@ RELOAD_TOKEN=<any secret string — protects the /reload endpoint>
 # Optional serving capacity overrides; defaults are intentionally conservative.
 VEHICLE_INSURANCE_SCORING_CONCURRENCY=1
 VEHICLE_INSURANCE_MODEL_THREADS=1
+VEHICLE_INSURANCE_MAX_REQUEST_BODY_BYTES=4194304
 ```
 
 Scoring is bounded per process: one `/predict` or `/rank` operation is active
@@ -357,6 +358,15 @@ checking concurrent inference safety. These limits are process-local, so each
 additional Uvicorn worker creates another model and another independent budget.
 Set MLflow's `MLFLOW_HTTP_REQUEST_TIMEOUT` to an appropriate finite value for
 the deployment so a remote reload cannot wait indefinitely.
+
+The application also rejects HTTP bodies larger than 4 MiB by default before
+JSON parsing (`VEHICLE_INSURANCE_MAX_REQUEST_BODY_BYTES` can be lowered or
+raised up to 64 MiB) and bounds the three free-text request fields before model
+work. The 10,000-record limit remains separate from the byte limit. These are
+defense-in-depth controls; a public deployment must still enforce body size,
+connection/request timeouts, rate limits, and access control at its chosen edge
+layer. The deployment target is not selected yet, so no Nginx, cloud gateway,
+or Kubernetes Ingress configuration is claimed here.
 
 ---
 

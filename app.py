@@ -196,6 +196,11 @@ SERVING_MODEL_THREADS = _read_bounded_positive_int(
     1,
     maximum=SERVING_CPU_COUNT,
 )
+MAX_REQUEST_BODY_BYTES = _read_bounded_positive_int(
+    "VEHICLE_INSURANCE_MAX_REQUEST_BODY_BYTES",
+    4 * 1024 * 1024,
+    maximum=64 * 1024 * 1024,
+)
 
 # These limiters are deliberately process-local. A deployment using multiple
 # workers gets one model and one capacity budget per worker and must account for
@@ -557,12 +562,12 @@ class PredictRequest(BaseModel):
         ),
     )
     Age: StrictInt
-    Gender: StrictStr
+    Gender: StrictStr = Field(max_length=64)
     Driving_License: StrictInt
     Region_Code: StrictInt | StrictFloat
     Previously_Insured: StrictInt
-    Vehicle_Age: StrictStr
-    Vehicle_Damage: StrictStr
+    Vehicle_Age: StrictStr = Field(max_length=64)
+    Vehicle_Damage: StrictStr = Field(max_length=64)
     Annual_Premium: StrictInt | StrictFloat
     Policy_Sales_Channel: StrictInt | StrictFloat
     Vintage: StrictInt
@@ -819,6 +824,76 @@ def _api_error_response(
             fields=fields or [],
         ).model_dump(),
     )
+
+
+class RequestBodyLimitMiddleware:
+    """Reject oversized bodies before FastAPI parses JSON into request models."""
+
+    def __init__(self, app, max_body_bytes: int):
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        content_length = next(
+            (
+                value
+                for name, value in scope.get("headers", [])
+                if name.lower() == b"content-length"
+            ),
+            None,
+        )
+        try:
+            declared_length = int(content_length) if content_length else None
+        except (TypeError, ValueError):
+            declared_length = None
+        if declared_length is not None and declared_length > self.max_body_bytes:
+            await _api_error_response(
+                status_code=413,
+                error_code="REQUEST_BODY_TOO_LARGE",
+                message="Request body exceeds the configured size limit.",
+            )(scope, receive, send)
+            return
+
+        received_bytes = 0
+        request_messages = []
+        while True:
+            message = await receive()
+            request_messages.append(message)
+            if message.get("type") == "http.request":
+                received_bytes += len(message.get("body", b""))
+                if received_bytes > self.max_body_bytes:
+                    await _api_error_response(
+                        status_code=413,
+                        error_code="REQUEST_BODY_TOO_LARGE",
+                        message="Request body exceeds the configured size limit.",
+                    )(scope, receive, send)
+                    return
+                if not message.get("more_body", False):
+                    break
+            elif message.get("type") == "http.disconnect":
+                break
+
+        message_index = 0
+
+        async def replay_receive():
+            nonlocal message_index
+            if message_index < len(request_messages):
+                message = request_messages[message_index]
+                message_index += 1
+                return message
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        await self.app(scope, replay_receive, send)
+
+
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    max_body_bytes=MAX_REQUEST_BODY_BYTES,
+)
 
 
 def _validated_scoring_dataframe(

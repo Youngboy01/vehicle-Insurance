@@ -405,6 +405,23 @@ Required edge-case behavior:
 
 `top_k_percentage=10` is the configurable Phase 1 baseline, not a universal company requirement. An unselected customer is lower campaign priority; it is not rejected, denied, or ineligible.
 
+### Request resource limits
+
+The application rejects HTTP request bodies larger than 4 MiB by default before
+JSON parsing. `VEHICLE_INSURANCE_MAX_REQUEST_BODY_BYTES` may tune the limit up
+to 64 MiB, but the configured value must leave room for the supported 10,000-
+record batch and normal JSON overhead. `/rank` still rejects more than 10,000
+records independently. `Gender`, `Vehicle_Age`, and `Vehicle_Damage` are
+bounded to 64 characters each before model work; category
+validation still applies afterward.
+
+Scoring capacity is process-local and excess work returns `503 SCORING_BUSY`
+instead of waiting in an unbounded queue. These application controls are
+defense in depth. The deployment target is not selected yet, so body limits,
+connection/request timeouts, rate limiting, TLS, and access control at a
+public Nginx, cloud gateway, or Kubernetes Ingress remain required and
+important before public exposure.
+
 Standard capacity warnings:
 
 ```text
@@ -480,6 +497,7 @@ Standard error codes include:
 | `SCORING_TARGET_FORBIDDEN` | `Response` supplied during scoring |
 | `SCORING_DUPLICATE_ID` | Duplicate or missing customer IDs in a batch |
 | `SCORING_EMPTY_BATCH` | No scoring records supplied |
+| `REQUEST_BODY_TOO_LARGE` | HTTP request body exceeds the application byte limit |
 | `FEATURE_MAPPING_REQUIRED` | Required company field has no approved canonical mapping |
 | `TRAINING_SCHEMA_INVALID` | Invalid labeled training data |
 | `PROVENANCE_METADATA_INVALID` | Required snapshot or provenance metadata is missing or invalid |
