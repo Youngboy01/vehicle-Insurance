@@ -28,7 +28,9 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
-/tests/
+/tests/.n1-local-backup-*/
+/tests/pytest-of-*/
+/tests/run_real_training.py
 htmlcov/
 .tox/
 .nox/
@@ -149,3 +151,6 @@ demo.py
 /review.md
 /baseline_audit_*.md
 /complexity_reduction_review.md
+/test_code_simplification_review_2026-10-01.md
+/test_review_2026-09-30.md
+/test_case_audit_2026-10-20.md
