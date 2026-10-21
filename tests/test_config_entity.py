@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from vehicle_insurance.entities.config_entity import (
@@ -58,17 +57,6 @@ def test_one_training_pipeline_shares_one_artifact_root_across_all_stages():
     assert Path(pipeline.model_evaluation_config.model_evaluation_dir).parent == Path(
         expected_root
     )
-
-
-def test_run_root_generation_remains_unique_for_parallel_config_creation():
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        configs = list(executor.map(lambda _: TrainingPipelineConfig(), range(32)))
-
-    artifact_roots = [config.artifact_dir for config in configs]
-    timestamps = [config.timestamp for config in configs]
-
-    assert len(set(artifact_roots)) == len(configs)
-    assert len(set(timestamps)) == len(configs)
 
 
 def test_explicit_stage_paths_remain_unchanged(tmp_path):

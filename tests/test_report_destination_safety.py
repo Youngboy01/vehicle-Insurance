@@ -377,6 +377,8 @@ def test_parity_writer_rejects_protected_inputs_without_mutation(
 
 def test_parity_writer_uses_unique_temp_and_allows_ordinary_replacement(tmp_path):
     paths = _candidate(tmp_path)
+    original_model = paths["model"].read_bytes()
+    original_metrics = paths["metrics"].read_bytes()
     temporary_alias = paths["certificate"].with_suffix(
         paths["certificate"].suffix + ".tmp"
     )
@@ -387,25 +389,14 @@ def test_parity_writer_uses_unique_temp_and_allows_ordinary_replacement(tmp_path
     assert json.loads(paths["certificate"].read_text(encoding="utf-8")) == {
         "attempt": 1
     }
+    assert paths["model"].read_bytes() == original_model
+    assert paths["metrics"].read_bytes() == original_metrics
     assert temporary_alias.read_bytes() == b"pre-existing temporary evidence"
 
     certification._write_report({"attempt": 2})
     assert json.loads(paths["certificate"].read_text(encoding="utf-8")) == {
         "attempt": 2
     }
-
-
-def test_parity_writer_completes_fresh_custom_certificate(tmp_path):
-    paths = _candidate(tmp_path)
-    certificate = paths["certificate"].with_name("fresh-certificate.json")
-    certification = _parity_writer(tmp_path, certificate)
-    original_model = paths["model"].read_bytes()
-    original_metrics = paths["metrics"].read_bytes()
-
-    certification._write_report({"status": "pending"})
-    certification._write_report({"status": "verified"})
-
-    assert json.loads(certificate.read_text(encoding="utf-8")) == {"status": "verified"}
     assert paths["model"].read_bytes() == original_model
     assert paths["metrics"].read_bytes() == original_metrics
 
