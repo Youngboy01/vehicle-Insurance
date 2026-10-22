@@ -251,11 +251,3 @@ class InsuranceData(MongoDBConnection):
             return MongoExtractionResult(dataframe=dataframe, manifest=manifest)
         except Exception as error:
             raise VehicleInsuranceException(error, sys) from error
-
-    def get_collection(self, collection_name, database_name=None):
-        """Compatibility wrapper returning only the verified snapshot dataframe."""
-
-        return self.extract_snapshot(
-            collection_name=collection_name,
-            database_name=database_name,
-        ).dataframe

@@ -140,6 +140,8 @@ def test_trainer_train_writes_lineage_and_self_contained_pipeline(
     # This category is absent from train but present in validation. The final
     # train-plus-validation refit must therefore add one encoded feature.
     raw_validation.loc[raw_validation.index[0], "Region_Code"] = 30.0
+    # The saved pipeline must also handle a category it never saw during fit.
+    raw_test.loc[raw_test.index[0], "Region_Code"] = 31.0
 
     train_path = tmp_path / "train.csv"
     validation_path = tmp_path / "validation.csv"
@@ -166,6 +168,9 @@ def test_trainer_train_writes_lineage_and_self_contained_pipeline(
 
     final_preprocessor = clone(preprocessor)
     final_x = pd.concat([train_x, validation_x], ignore_index=True)
+    final_y = np.concatenate(
+        [raw_train["Response"].to_numpy(), raw_validation["Response"].to_numpy()]
+    )
     final_transformed = final_preprocessor.fit_transform(final_x)
 
     preprocessor_path = tmp_path / "preprocessor.pkl"
@@ -260,6 +265,33 @@ def test_trainer_train_writes_lineage_and_self_contained_pipeline(
         lambda **_: SimpleNamespace(model_id="m-test", model_uri="models:/m-test"),
     )
 
+    pipeline_fit_calls = []
+    real_pipeline_fit = model_trainer_module.Pipeline.fit
+
+    def record_pipeline_fit(pipeline, X, y=None, **fit_params):
+        pipeline_fit_calls.append((pipeline, X.copy(), np.asarray(y).copy()))
+        return real_pipeline_fit(pipeline, X, y, **fit_params)
+
+    monkeypatch.setattr(
+        model_trainer_module.Pipeline,
+        "fit",
+        record_pipeline_fit,
+    )
+
+    test_metric_calls = []
+    real_compute_metrics = trainer._compute_metrics
+    expected_test_ids = raw_test["id"].to_numpy()
+
+    def record_test_metrics(model, X, y, ids):
+        id_values = np.asarray(ids).ravel()
+        if np.array_equal(id_values, expected_test_ids):
+            test_metric_calls.append(
+                (model, X.copy(), np.asarray(y).copy(), id_values.copy())
+            )
+        return real_compute_metrics(model, X, y, ids)
+
+    monkeypatch.setattr(trainer, "_compute_metrics", record_test_metrics)
+
     artifact = trainer.train()
 
     assert artifact.run_id == "test-run-id"
@@ -275,10 +307,37 @@ def test_trainer_train_writes_lineage_and_self_contained_pipeline(
     assert output_model_path.is_file()
     assert metrics_path.is_file()
 
+    final_fit_calls = [
+        call
+        for call in pipeline_fit_calls
+        if isinstance(call[1], pd.DataFrame) and call[1].equals(final_x)
+    ]
+    assert len(final_fit_calls) == 1
+    final_fit_pipeline, fitted_rows, fitted_labels = final_fit_calls[0]
+    pd.testing.assert_frame_equal(fitted_rows, final_x)
+    np.testing.assert_array_equal(fitted_labels, final_y)
+
+    assert len(test_metric_calls) == 1
+    evaluated_pipeline, evaluated_features, evaluated_labels, evaluated_ids = (
+        test_metric_calls[0]
+    )
+    assert evaluated_pipeline is final_fit_pipeline
+    pd.testing.assert_frame_equal(
+        evaluated_features.reset_index(drop=True),
+        test_x.reset_index(drop=True),
+    )
+    np.testing.assert_array_equal(evaluated_labels, raw_test["Response"].to_numpy())
+    np.testing.assert_array_equal(evaluated_ids, expected_test_ids)
+
     final_pipeline = load_object(str(output_model_path))
     assert (
         final_pipeline.named_steps["model"].n_features_in_ == final_transformed.shape[1]
     )
+    predictions = final_pipeline.predict_proba(test_x)
+    assert predictions.shape == (len(raw_test), 2)
+    assert np.isfinite(predictions).all()
+    assert np.all((predictions >= 0.0) & (predictions <= 1.0))
+    np.testing.assert_allclose(predictions.sum(axis=1), np.ones(len(raw_test)))
 
     lineage = json.loads(metrics_path.read_text(encoding="utf-8"))["lineage"]
     assert lineage["final_fit_data"] == "train_plus_validation"

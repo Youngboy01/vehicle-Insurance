@@ -155,7 +155,6 @@ evaluation_policy:
     minimum_segment_sample_size: configurable_by_audit_policy
     insufficient_sample_behavior: suppress_or_group_segment
   parity:
-    source_frozen_prediction_parity_required: true
     block_release_on_failure: true
     # Release qualification requires both durable local evidence and the
     # corresponding MLflow artifact/tags.  Standalone audits may select a

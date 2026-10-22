@@ -18,9 +18,9 @@ evaluation_policy:
 ```
 
 Release-quality training must therefore run from a repository with committed
-source and configuration files. Pipeline-generated artifacts, logs, and local
-tests remain ignored according to `.gitignore` and do not become release source
-changes.
+source, configuration, and test files. Pipeline-generated artifacts, logs, and
+private planning notes remain ignored according to `.gitignore` and do not
+become release source changes.
 
 ## Preflight sequence
 

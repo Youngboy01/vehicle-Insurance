@@ -1,4 +1,3 @@
-import pandas as pd
 import pymongo
 import pytest
 
@@ -29,7 +28,6 @@ class _FakeCursor:
 class _FakeCollection:
     def __init__(self, records):
         self.records = records
-        self.batch_size = None
         self.cursor = None
 
     def index_information(self):
@@ -41,7 +39,6 @@ class _FakeCollection:
         assert projection["id"] == 1
         assert projection["Response"] == 1
         assert "marker" not in projection
-        self.batch_size = batch_size
         self.cursor = _FakeCursor(
             [
                 {
@@ -90,26 +87,6 @@ class _FakeClient:
         return _FakeSession()
 
 
-def test_get_collection_uses_batched_cursor_and_closes_it():
-    records = [
-        {"id": 2, "Response": 1, "marker": "na"},
-        {"id": 1, "Response": 0},
-    ]
-    collection = _FakeCollection(records)
-    insurance_data = object.__new__(InsuranceData)
-    database = _FakeDatabase(collection)
-    insurance_data.database = database
-    insurance_data.client = _FakeClient(database)
-
-    result = insurance_data.get_collection("INSURANCE_DATA")
-
-    assert isinstance(result, pd.DataFrame)
-    assert result["id"].tolist() == [1, 2]
-    assert "marker" not in result.columns
-    assert collection.batch_size == 10_000
-    assert collection.cursor.closed is True
-
-
 def test_snapshot_manifest_records_read_boundary_and_source_contract():
     records = [
         {"id": 1, "Response": 0},
@@ -134,19 +111,34 @@ def test_snapshot_manifest_records_read_boundary_and_source_contract():
     assert result.manifest["ordering"]["index_name"] == "id_1"
     assert result.manifest["row_count"] == 2
     assert result.manifest["id_range"] == {"field": "id", "min": 1, "max": 2}
+    assert collection.cursor.closed is True
 
 
 def test_snapshot_retryable_read_failure_aborts_without_retry():
     class FailingCursor(_FakeCursor):
         def __iter__(self):
+            yield self.records[0]
             raise pymongo.errors.AutoReconnect("cursor interrupted")
 
     class FailingCollection(_FakeCollection):
+        def __init__(self, records):
+            super().__init__(records)
+            self.find_calls = 0
+
         def find(self, query, projection, *, batch_size, session):
-            self.cursor = FailingCursor(self.records)
+            self.find_calls += 1
+            cursor = super().find(
+                query,
+                projection,
+                batch_size=batch_size,
+                session=session,
+            )
+            self.cursor = FailingCursor(cursor.records)
             return self.cursor
 
-    collection = FailingCollection([{"id": 1, "Response": 0}])
+    collection = FailingCollection(
+        [{"id": 1, "Response": 0}, {"id": 2, "Response": 1}]
+    )
     insurance_data = object.__new__(InsuranceData)
     database = _FakeDatabase(collection)
     insurance_data.database = database
@@ -154,3 +146,6 @@ def test_snapshot_retryable_read_failure_aborts_without_retry():
 
     with pytest.raises(Exception, match="aborted without retrying"):
         insurance_data.extract_snapshot("INSURANCE_DATA")
+
+    assert collection.find_calls == 1
+    assert collection.cursor.closed is True

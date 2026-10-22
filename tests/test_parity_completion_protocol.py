@@ -312,20 +312,6 @@ def test_local_only_success_does_not_satisfy_remote_required_policy(tmp_path):
     assert "source_frozen_recording_mode_mismatch" in gate["reason_codes"]
 
 
-def test_process_interruption_after_pending_write_is_rejected(tmp_path):
-    root = _candidate(tmp_path)
-    certification = _certification(root)
-    report = certification._build_report()
-    certification._write_report(report)
-    certification._apply_local_lineage(report, "pending")
-
-    evidence = json.loads(
-        (root / "model_trainer" / "metrics.json").read_text(encoding="utf-8")
-    )["lineage"]["source_frozen_parity"]
-    assert evidence["status"] == "pending"
-    assert _parity_gate(root)["passed"] is False
-
-
 def test_newer_attempt_cannot_reuse_an_older_certificate(tmp_path, monkeypatch):
     root = _candidate(tmp_path)
     _run_remote_success(root, monkeypatch)

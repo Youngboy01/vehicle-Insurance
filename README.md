@@ -460,24 +460,17 @@ During local development, the dashboard derives a cache-busting query value from
 
 > Current serving contract: the API loads the immutable candidate model ID, URI, and run ID recorded in `configs/model_spec.yaml` at startup and on `/reload`. It loads one self-contained sklearn preprocessing-plus-LightGBM pipeline, validates raw inputs, and calls its public `predict_proba()` interface. A failed startup load leaves the process live but not ready; a failed reload leaves the previously served engine unchanged. Promotion remains disabled; no registry alias is consulted.
 
-The baseline serving verification target is readiness latency below 500 ms
-while the maximum supported `/rank` batch (10,000 records) is scoring or a
-deliberately slow reload is loading a replacement. Measurements must report
-the batch size, request concurrency, Uvicorn worker count, native model thread
-count, and readiness latency distribution for the full HTTP path.
+---
 
-The exact-loader one-worker measurement completed on 2026-09-20 with the
-production `_load_engine_from_mlflow()` path, one active scoring operation,
-and one native model thread. MLflow loaded model
-`m-e339c348e27d400d835b8e8bdf8fdbe1` from run
-`0a5a3eb264464111ad86075bd811531d` in 9,766.429 ms, matching the immutable
-configuration. The HTTP run submitted 10,000 valid records and selected all
-10,000 customers. During scoring, 322 readiness probes all succeeded: p50 was
-34.087 ms, p95 71.936 ms, p99 79.991 ms, and maximum 81.350 ms, with no
-timeouts or connection failures. The rank request took 937.232 ms end to end
-and the scoring worker took 834.426 ms; the response was 588,242 bytes. This
-is a repeatable local verification result, not a production-wide latency
-SLO; MLflow load time is reported separately from per-request scoring.
+## Tests
+
+From the repository root on Windows, with the project environment installed and Node.js available for the identifier-precision test:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests -q -ra
+```
+
+The default suite uses synthetic fixtures; its trainer test uses small local data, and it does not run the live training pipeline or contact MongoDB/MLflow services. A Windows process without symbolic-link privilege may skip one destination-safety case. The suite has been run locally, but clean-checkout and CI verification remain open.
 
 ---
 
@@ -525,7 +518,7 @@ Configured in `configs/schema.yaml` and enforced by Pandera in the validation st
 - [ ] CD pipeline: automated deployment on merge to `main`
 - [ ] Cloud deployment (e.g., AWS/GCP/Azure container hosting)
 - [ ] Scheduled/automated retraining trigger
-- [ ] Unit and integration tests for pipeline components
+- [x] Local offline and ASGI regression tests (clean-checkout/CI verification pending)
 - [ ] Model/data drift monitoring
 
 ---

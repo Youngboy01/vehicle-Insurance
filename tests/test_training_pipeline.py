@@ -176,7 +176,6 @@ def test_source_frozen_parity_stage_uses_candidate_artifact_and_applies_lineage(
         "SourceFrozenParityCertification",
         _FakeCertification,
     )
-    monkeypatch.setattr(pipeline, "_source_frozen_parity_required", lambda: True)
 
     report = pipeline.start_source_frozen_parity()
 
@@ -185,19 +184,6 @@ def test_source_frozen_parity_stage_uses_candidate_artifact_and_applies_lineage(
     assert captured["candidate_artifact_dir"] == (tmp_path).resolve()
     assert captured["apply_lineage"] is True
     assert captured["log_mlflow_evidence"] is True
-
-
-def test_source_frozen_parity_stage_can_be_disabled_by_policy(monkeypatch, tmp_path):
-    pipeline = TrainingPipeline()
-    pipeline.model_trainer_config = SimpleNamespace(
-        model_trainer_dir=str(tmp_path / "model_trainer")
-    )
-    monkeypatch.setattr(pipeline, "_source_frozen_parity_required", lambda: False)
-
-    report = pipeline.start_source_frozen_parity()
-
-    assert report["status"] == "not_required"
-    assert report["lineage_recording"]["requested"] is False
 
 
 def test_reload_lineage_refreshes_in_memory_trainer_artifact(tmp_path):

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -139,9 +141,11 @@ def test_ingestion_creates_disjoint_stratified_three_way_split(
     )
     assert set(test["id"]) == set(expected_test["id"])
     assert set(validation["id"]) == set(expected_validation["id"])
-    assert artifact.feature_store_file_path.endswith("feature_store\\data.csv")
-    assert artifact.source_manifest_file_path.endswith(
-        "feature_store\\source_manifest.json"
+    assert Path(artifact.feature_store_file_path) == (
+        ingestion_dir / "feature_store" / "data.csv"
+    )
+    assert Path(artifact.source_manifest_file_path) == (
+        ingestion_dir / "feature_store" / "source_manifest.json"
     )
     assert artifact.source_manifest["immutable"] is True
     assert artifact.source_manifest["row_count"] == len(source_data)

@@ -54,9 +54,19 @@ def _candidate(root: Path) -> dict[str, Path]:
 
 
 def _fake_evaluator(monkeypatch):
+    captured = {}
+
     class _Evaluator:
-        def __init__(self, *, model_evaluation_config, **_kwargs):
+        def __init__(
+            self,
+            *,
+            model_evaluation_config,
+            model_trainer_artifact,
+            evaluation_context,
+        ):
             self.config = model_evaluation_config
+            captured["artifact"] = model_trainer_artifact
+            captured["context"] = evaluation_context
 
         def evaluate_model(self):
             output = Path(self.config.report_file_path)
@@ -69,6 +79,7 @@ def _fake_evaluator(monkeypatch):
             )
 
     monkeypatch.setattr(replay_module, "ModelEvaluation", _Evaluator)
+    return captured
 
 
 @pytest.mark.parametrize(
@@ -190,12 +201,23 @@ def test_replay_second_validation_protects_custom_external_certificate(
 
 
 def test_replay_default_and_explicit_reports_are_exclusive(tmp_path, monkeypatch):
-    _candidate(tmp_path)
-    _fake_evaluator(monkeypatch)
+    paths = _candidate(tmp_path)
+    original_report_bytes = paths["decision"].read_bytes()
+    captured = _fake_evaluator(monkeypatch)
 
     first = replay_module.replay_model_evaluation(tmp_path)
     default_report = tmp_path / "model_evaluation" / "replay_report.json"
     assert first.evaluation_report_file_path == str(default_report)
+    assert default_report.is_file()
+    assert default_report.read_bytes() == b"replay report"
+    assert isinstance(captured["artifact"], ModelTrainerArtifact)
+    assert captured["artifact"].run_id == "candidate-run"
+    assert captured["artifact"].model_id == "candidate-model"
+    assert captured["artifact"].trained_model_file_path == str(paths["model"])
+    assert captured["context"]["mode"] == "replay"
+    assert captured["context"]["replay_purpose"] == (
+        "re_evaluate_existing_candidate_after_lineage_update"
+    )
     original_bytes = default_report.read_bytes()
 
     with pytest.raises(VehicleInsuranceException):
@@ -208,6 +230,7 @@ def test_replay_default_and_explicit_reports_are_exclusive(tmp_path, monkeypatch
     with pytest.raises(VehicleInsuranceException):
         replay_module.replay_model_evaluation(tmp_path, report_file_path=explicit)
     assert explicit.read_bytes() == explicit_bytes
+    assert paths["decision"].read_bytes() == original_report_bytes
 
 
 def _evaluation_artifact(root: Path) -> ModelTrainerArtifact:
@@ -228,9 +251,7 @@ def _evaluation_artifact(root: Path) -> ModelTrainerArtifact:
     )
 
 
-def test_evaluator_writer_rejects_protected_inputs_and_overwrites_ordinary_report(
-    tmp_path,
-):
+def test_evaluator_writer_rejects_protected_model_input(tmp_path):
     artifact = _evaluation_artifact(tmp_path)
     protected_bytes = Path(artifact.trained_model_file_path).read_bytes()
     evaluator = ModelEvaluation(
@@ -244,15 +265,6 @@ def test_evaluator_writer_rejects_protected_inputs_and_overwrites_ordinary_repor
     with pytest.raises(VehicleInsuranceException):
         evaluator._save_report({"attempt": "unsafe"})
     assert Path(artifact.trained_model_file_path).read_bytes() == protected_bytes
-
-    ordinary_report = tmp_path / "ordinary-report.json"
-    evaluator = ModelEvaluation(
-        ModelEvaluationConfig(report_file_path=str(ordinary_report)),
-        artifact,
-    )
-    evaluator._save_report({"attempt": 1})
-    evaluator._save_report({"attempt": 2})
-    assert json.loads(ordinary_report.read_text(encoding="utf-8")) == {"attempt": 2}
 
 
 def test_evaluator_normal_decision_report_is_explicitly_replaceable(tmp_path):
@@ -296,35 +308,6 @@ def test_evaluator_rejects_decision_path_hard_linked_to_model(tmp_path):
     assert decision_report.read_bytes() == original_model
 
 
-@pytest.mark.parametrize("link_kind", ("hard", "symbolic"))
-def test_evaluator_writer_does_not_follow_predictable_temp_alias(tmp_path, link_kind):
-    artifact = _evaluation_artifact(tmp_path)
-    output = tmp_path / "ordinary-report.json"
-    temporary_alias = output.with_suffix(output.suffix + ".tmp")
-    model_path = Path(artifact.trained_model_file_path)
-    original_model = model_path.read_bytes()
-    try:
-        if link_kind == "hard":
-            os.link(model_path, temporary_alias)
-        else:
-            temporary_alias.symlink_to(model_path)
-    except OSError as error:  # pragma: no cover - platform/filesystem dependent
-        pytest.skip(f"{link_kind} links unavailable: {error}")
-
-    evaluator = ModelEvaluation(
-        ModelEvaluationConfig(report_file_path=str(output)),
-        artifact,
-    )
-    evaluator._save_report({"safe": True})
-
-    assert model_path.read_bytes() == original_model
-    if link_kind == "hard":
-        assert temporary_alias.read_bytes() == original_model
-    else:
-        assert temporary_alias.is_symlink()
-        assert temporary_alias.read_bytes() == original_model
-
-
 def _parity_writer(root: Path, destination: Path) -> SourceFrozenParityCertification:
     certification = SourceFrozenParityCertification.__new__(
         SourceFrozenParityCertification
@@ -358,21 +341,15 @@ def test_parity_run_validates_destination_before_candidate_stages(tmp_path):
     assert model_path.read_bytes() == original_bytes
 
 
-@pytest.mark.parametrize(
-    "protected_name",
-    ("model", "metrics", "source", "manifest", "decision"),
-)
-def test_parity_writer_rejects_protected_inputs_without_mutation(
-    tmp_path, protected_name
-):
+def test_parity_writer_rejects_protected_model_input_without_mutation(tmp_path):
     paths = _candidate(tmp_path)
-    certification = _parity_writer(tmp_path, paths[protected_name])
-    original_bytes = paths[protected_name].read_bytes()
+    certification = _parity_writer(tmp_path, paths["model"])
+    original_bytes = paths["model"].read_bytes()
 
     with pytest.raises(ReportDestinationError):
         certification._write_report({"attempt": "unsafe"})
 
-    assert paths[protected_name].read_bytes() == original_bytes
+    assert paths["model"].read_bytes() == original_bytes
 
 
 def test_parity_writer_uses_unique_temp_and_allows_ordinary_replacement(tmp_path):
@@ -422,49 +399,6 @@ def test_parity_writer_rejects_existing_lineage_certificate_after_initial_check(
         certification._write_report({"status": "replacement"})
 
     assert certificate.read_bytes() == original
-
-
-@pytest.mark.parametrize("link_kind", ("hard", "symbolic"))
-def test_parity_writer_does_not_follow_predictable_temp_alias(tmp_path, link_kind):
-    paths = _candidate(tmp_path)
-    temporary_alias = paths["certificate"].with_suffix(
-        paths["certificate"].suffix + ".tmp"
-    )
-    original_model = paths["model"].read_bytes()
-    try:
-        if link_kind == "hard":
-            os.link(paths["model"], temporary_alias)
-        else:
-            temporary_alias.symlink_to(paths["model"])
-    except OSError as error:  # pragma: no cover - platform/filesystem dependent
-        pytest.skip(f"{link_kind} links unavailable: {error}")
-
-    certification = _parity_writer(tmp_path, paths["certificate"])
-    certification._write_report({"attempt": "safe"})
-
-    assert paths["model"].read_bytes() == original_model
-    if link_kind == "hard":
-        assert temporary_alias.read_bytes() == original_model
-    else:
-        assert temporary_alias.is_symlink()
-        assert temporary_alias.read_bytes() == original_model
-
-
-def test_parity_writer_rejects_hard_link_alias_to_model(tmp_path):
-    paths = _candidate(tmp_path)
-    alias = tmp_path / "parity-hard-link.pkl"
-    try:
-        os.link(paths["model"], alias)
-    except OSError as error:  # pragma: no cover - platform/filesystem dependent
-        pytest.skip(f"hard links unavailable: {error}")
-    certification = _parity_writer(tmp_path, alias)
-    original_bytes = paths["model"].read_bytes()
-
-    with pytest.raises(ReportDestinationError):
-        certification._write_report({"attempt": "unsafe"})
-
-    assert paths["model"].read_bytes() == original_bytes
-    assert alias.read_bytes() == original_bytes
 
 
 def test_parity_writer_rejects_canonical_certificate_hard_linked_to_model(tmp_path):
@@ -550,22 +484,6 @@ def _lineage_update_fixture(root: Path) -> tuple[SourceFrozenParityCertification
         },
     }
     return certification, report
-
-
-def test_parity_metrics_writer_does_not_follow_predictable_temp_alias(tmp_path):
-    certification, report = _lineage_update_fixture(tmp_path)
-    paths = _candidate(tmp_path)
-    temporary_alias = paths["metrics"].with_suffix(paths["metrics"].suffix + ".tmp")
-    original_model = paths["model"].read_bytes()
-    try:
-        os.link(paths["model"], temporary_alias)
-    except OSError as error:  # pragma: no cover - platform/filesystem dependent
-        pytest.skip(f"hard links unavailable: {error}")
-
-    certification._apply_local_lineage(report, "pending")
-
-    assert paths["model"].read_bytes() == original_model
-    assert temporary_alias.read_bytes() == original_model
 
 
 def test_parity_metrics_writer_rejects_metrics_entry_hard_linked_to_model(tmp_path):

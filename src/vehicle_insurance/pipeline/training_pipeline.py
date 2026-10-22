@@ -247,18 +247,6 @@ class TrainingPipeline:
             self.git_provenance["branch"],
         )
 
-    @staticmethod
-    def _source_frozen_parity_required() -> bool:
-        model_spec = read_yaml_file(MODEL_SPEC_FILE_PATH)
-        parity_policy = model_spec.get("evaluation_policy", {}).get("parity", {})
-        required = parity_policy.get("source_frozen_prediction_parity_required")
-        if not isinstance(required, bool):
-            raise ValueError(
-                "evaluation_policy.parity.source_frozen_prediction_parity_required "
-                "must be boolean"
-            )
-        return required
-
     def start_source_frozen_parity(self) -> dict[str, Any]:
         """Certify and attach source-frozen parity before final evaluation.
 
@@ -271,16 +259,6 @@ class TrainingPipeline:
             candidate_artifact_dir = (
                 Path(self.model_trainer_config.model_trainer_dir).resolve().parent
             )
-            if not self._source_frozen_parity_required():
-                report = {
-                    "status": "not_required",
-                    "candidate_artifact_dir": str(candidate_artifact_dir),
-                    "report_path": None,
-                    "lineage_recording": {"requested": False},
-                }
-                logger.info("Source-frozen parity stage is disabled by policy")
-                return report
-
             logger.info(
                 "Starting source-frozen parity stage for candidate artifact: %s",
                 candidate_artifact_dir,

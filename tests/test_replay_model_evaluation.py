@@ -1,11 +1,9 @@
 import hashlib
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from vehicle_insurance.entities.artifact_entity import ModelEvaluationArtifact
 from vehicle_insurance.verification import replay_model_evaluation as replay_module
 
 
@@ -52,58 +50,6 @@ def test_load_model_trainer_artifact_reconstructs_typed_artifact(tmp_path):
     assert artifact.trained_model_file_path == str(
         tmp_path / "model_trainer" / "model.pkl"
     )
-
-
-def test_replay_delegates_to_evaluator_and_preserves_previous_report(
-    tmp_path,
-    monkeypatch,
-):
-    _write_candidate_artifact(tmp_path)
-    captured = {}
-
-    class _FakeEvaluator:
-        def __init__(
-            self, *, model_evaluation_config, model_trainer_artifact, evaluation_context
-        ):
-            captured["config"] = model_evaluation_config
-            captured["artifact"] = model_trainer_artifact
-            captured["context"] = evaluation_context
-
-        def evaluate_model(self):
-            return ModelEvaluationArtifact(
-                evaluation_passed=True,
-                decision="eligible_but_promotion_disabled",
-                promotion_status="disabled",
-                promotion_performed=False,
-                candidate_run_id="candidate-run",
-                candidate_model_id="candidate-model",
-                candidate_model_uri="models:/candidate-model",
-                champion_run_id=None,
-                champion_model_version=None,
-                candidate_validation_metrics={"pr_auc": 0.39},
-                champion_validation_metrics=None,
-                candidate_test_metrics={"pr_auc": 0.38},
-                stability_metrics={"evaluation_count": 9},
-                metric_comparison={},
-                gate_results={},
-                reason_codes=[],
-                lineage={"source_frozen_parity": {"status": "verified"}},
-                evaluation_report_file_path=captured["config"].report_file_path,
-            )
-
-    monkeypatch.setattr(replay_module, "ModelEvaluation", _FakeEvaluator)
-
-    result = replay_module.replay_model_evaluation(tmp_path)
-
-    assert result.evaluation_passed is True
-    assert captured["context"]["mode"] == "replay"
-    assert captured["context"]["replay_purpose"] == (
-        "re_evaluate_existing_candidate_after_lineage_update"
-    )
-    assert captured["config"].report_file_path == str(
-        tmp_path / "model_evaluation" / "replay_report.json"
-    )
-    assert (tmp_path / "model_evaluation" / "report.json").read_text() == "{}"
 
 
 def test_loader_rejects_missing_model_file(tmp_path):

@@ -77,9 +77,9 @@ newer and is a replica set or sharded cluster. The pipeline requires MongoDB
 snapshot sessions for a consistent read boundary and intentionally fails if
 the server cannot provide them.
 
-Because strict Git provenance runs before ingestion, commit the reviewed source
-and configuration changes before starting a real pipeline run. The personal
-`daily log.md` and ignored tests stay outside that commit.
+Because strict Git provenance runs before ingestion, commit the reviewed source,
+configuration, and test changes before starting a real pipeline run. The personal
+`daily log.md` and other private notes stay outside that commit.
 
 ## Retry and rerun behavior
 

@@ -37,14 +37,19 @@ def test_capture_git_provenance_records_status_and_patch_identity(
     (tmp_path / "configs" / "schema.yaml").write_text("schema", encoding="utf-8")
     (tmp_path / "uv.lock").write_text("lock", encoding="utf-8")
 
-    def fake_git(_repo_root, *arguments):
-        if arguments[:1] == ("status",):
+    def fake_git(repo_root, *arguments):
+        assert repo_root == tmp_path
+        if arguments == (
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        ):
             return b" M src/example.py\n?? src/new.py\n"
-        if arguments[:1] == ("diff",):
+        if arguments == ("diff", "--no-ext-diff", "--binary", "HEAD"):
             return b"binary-safe patch"
-        if arguments[:2] == ("branch", "--show-current"):
+        if arguments == ("branch", "--show-current"):
             return b"project/updations\n"
-        if arguments[:2] == ("rev-parse", "HEAD"):
+        if arguments == ("rev-parse", "HEAD"):
             return b"a" * 40
         raise AssertionError(arguments)
 

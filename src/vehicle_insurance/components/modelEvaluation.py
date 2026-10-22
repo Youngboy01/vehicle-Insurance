@@ -522,12 +522,6 @@ class ModelEvaluation:
                 "reason_codes": ["source_frozen_parity_lineage_invalid"],
             }
         parity_policy = self.model_spec["evaluation_policy"]["parity"]
-        if not parity_policy.get("source_frozen_prediction_parity_required", False):
-            return {
-                "passed": True,
-                "required": False,
-                "reason_codes": [],
-            }
 
         provided_evidence = lineage.get("source_frozen_parity")
         if not isinstance(provided_evidence, dict):

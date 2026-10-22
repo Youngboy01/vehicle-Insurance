@@ -285,6 +285,21 @@ def test_evaluation_rejects_unverified_source_frozen_parity(tmp_path, monkeypatc
     assert "source_frozen_parity_not_verified" in artifact.reason_codes
 
 
+def test_evaluation_rejects_missing_source_frozen_parity(tmp_path, monkeypatch):
+    lineage = _lineage()
+    lineage.pop("source_frozen_parity")
+    _forbid_mlflow_lookup(monkeypatch)
+    evaluator = ModelEvaluation(
+        ModelEvaluationConfig(report_file_path=str(tmp_path / "report.json")),
+        _trainer(tmp_path, lineage=lineage),
+    )
+
+    artifact = evaluator.evaluate_model()
+
+    assert artifact.evaluation_passed is False
+    assert "source_frozen_parity_evidence_missing" in artifact.reason_codes
+
+
 def test_evaluation_compares_a_valid_champion_on_validation_metrics(
     tmp_path,
     monkeypatch,
