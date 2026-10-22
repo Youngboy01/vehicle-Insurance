@@ -464,13 +464,17 @@ During local development, the dashboard derives a cache-busting query value from
 
 ## Tests
 
-From the repository root on Windows, with the project environment installed and Node.js available for the identifier-precision test:
+From the repository root on Windows, run `uv sync --locked` to install the locked environment. Node.js is needed for the identifier-precision test. Then run:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests -q -ra
 ```
 
-The default suite uses synthetic fixtures; its trainer test uses small local data, and it does not run the live training pipeline or contact MongoDB/MLflow services. A Windows process without symbolic-link privilege may skip one destination-safety case. The suite has been run locally, but clean-checkout and CI verification remain open.
+If pytest fails only while cleaning its shared Windows temp directory with `WinError 5`, rerun with a fresh path: `$viTestTemp = Join-Path $env:TEMP ('vi-pytest-' + [guid]::NewGuid().ToString('N'))`; then append `--basetemp="$viTestTemp"` to the command above.
+
+The default suite uses synthetic fixtures; its trainer test uses small local data, and it does not run the live training pipeline or contact MongoDB/MLflow services. The tests cover the data contract and snapshot boundary, split and preprocessing behavior, final-model fit/test separation, lineage and parity gates, safe report output, privacy, and bounded ASGI scoring/reload behavior. The rank-offload test uses a paused fake worker to check readiness and consistent model identity; it is not a real 10,000-row latency benchmark or a performance SLO.
+
+A Windows process without symbolic-link privilege may skip the replay link-alias case. Commit `ea0e4d8` passed from a fresh Windows checkout with `uv sync --locked`: 106 passed, one such skip, no `.env` or service credentials, and the same result with the tracked benchmark CSV temporarily hidden. The newer HTTP and model-identity regressions passed locally (108 passed, one skip) and still need a fresh-checkout run at their committed revision. The separate `tests/run_real_training.py` helper is manual and not part of default collection; CI remains future work.
 
 ---
 

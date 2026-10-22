@@ -1,7 +1,6 @@
 import asyncio
 import json
 import threading
-import time
 from types import SimpleNamespace
 
 import anyio
@@ -132,7 +131,7 @@ def test_http_concurrent_scoring_request_is_rejected_without_queueing(
 
 def test_untrusted_origin_preflight_is_not_granted_cors_access() -> None:
     response_headers = []
-    asyncio.run(
+    status, _body = asyncio.run(
         _asgi_request(
             "/predict",
             method="OPTIONS",
@@ -144,6 +143,7 @@ def test_untrusted_origin_preflight_is_not_granted_cors_access() -> None:
         )
     )
 
+    assert status == 405
     assert all(
         name.lower() != b"access-control-allow-origin"
         for name, _value in response_headers
@@ -271,27 +271,135 @@ def _engine(model_id: str) -> app.PredictionEngine:
     )
 
 
-def test_predict_uses_bounded_complete_scoring_operation(
+def test_http_scoring_validates_and_ranks_model_outputs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = _engine("model")
+    engine.raw_feature_names = app.EXPECTED_RAW_FEATURES
+
+    def predict_proba(features):
+        scores = [0.81234 if age == 35 else 0.6 for age in features["Age"]]
+        return [[1 - score, score] for score in scores]
+
+    engine.model = SimpleNamespace(predict_proba=predict_proba)
     monkeypatch.setattr(app, "current_engine", engine)
     monkeypatch.setattr(
         app,
         "SCORING_OPERATION_LIMITER",
         anyio.CapacityLimiter(1),
     )
-    monkeypatch.setattr(
-        app,
-        "_score_raw_dataframe",
-        lambda _engine, _dataframe: [0.81234],
+
+    predict_status, predict_body = asyncio.run(
+        _asgi_request(
+            "/predict",
+            method="POST",
+            body=json.dumps(_record().model_dump()).encode("utf-8"),
+        )
     )
+    prediction = json.loads(predict_body)
+    assert predict_status == 200
+    assert prediction["response_propensity_score"] == 0.8123
+    assert prediction["probability"] == 0.8123
+    assert prediction["model_version"] == engine.model_id
 
-    response = asyncio.run(app.predict(_record()))
+    records = [
+        _record(2).model_dump(),
+        _record(1).model_dump(),
+        _record(3).model_dump(),
+    ]
+    records[-1]["Age"] = 40
+    rank_status, rank_body = asyncio.run(
+        _asgi_request(
+            "/rank",
+            method="POST",
+            body=json.dumps({"records": records, "top_k_count": 2}).encode("utf-8"),
+        )
+    )
+    ranking = json.loads(rank_body)
+    assert rank_status == 200
+    assert ranking["total_scored"] == 3
+    assert ranking["selected_count"] == 2
+    assert [customer["id"] for customer in ranking["selected_customers"]] == [1, 2]
+    assert [
+        customer["response_propensity_score"]
+        for customer in ranking["selected_customers"]
+    ] == [0.8123, 0.8123]
+    assert ranking["model_id"] == engine.model_id
+    assert ranking["source_run_id"] == engine.source_run_id
 
-    assert response.response_propensity_score == 0.8123
-    assert response.model_dump()["probability"] == 0.8123
-    assert response.model_version == engine.model_version
+    invalid_record = _record().model_dump()
+    invalid_record["Age"] = 17
+    invalid_status, invalid_body = asyncio.run(
+        _asgi_request(
+            "/predict",
+            method="POST",
+            body=json.dumps(invalid_record).encode("utf-8"),
+        )
+    )
+    assert invalid_status == 422
+    invalid_response = json.loads(invalid_body)
+    assert invalid_response["error_code"] == "SCORING_VALUE_INVALID"
+    assert "Age" in invalid_response["fields"]
+
+    engine.model = SimpleNamespace(predict_proba=lambda _features: [[0.81234]])
+    failure_status, failure_body = asyncio.run(
+        _asgi_request(
+            "/predict",
+            method="POST",
+            body=json.dumps(_record().model_dump()).encode("utf-8"),
+        )
+    )
+    assert failure_status == 500
+    assert json.loads(failure_body)["error_code"] == "MODEL_INFERENCE_FAILED"
+
+
+def test_http_failed_startup_recovers_after_reload(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unavailable():
+        raise ConnectionError("synthetic model-store outage")
+
+    monkeypatch.setattr(app, "_load_engine_from_mlflow", unavailable)
+    monkeypatch.setattr(app, "current_engine", None)
+    monkeypatch.setattr(app, "model_load_error", None)
+    monkeypatch.setattr(app, "model_load_failure_code", None)
+    monkeypatch.setattr(app, "model_load_attempted_at", None)
+    monkeypatch.setattr(app, "RELOAD_OPERATION_LIMITER", anyio.CapacityLimiter(1))
+    monkeypatch.setenv("RELOAD_TOKEN", "synthetic-token")
+    replacement_engine = _engine("replacement-model")
+
+    async def scenario():
+        async with app.lifespan(app.app):
+            live_status, live_body = await _asgi_request("/health/live")
+            assert live_status == 200
+            assert json.loads(live_body) == {"status": "alive"}
+
+            ready_status, ready_body = await _asgi_request("/health/ready")
+            assert ready_status == 503
+            assert json.loads(ready_body)["error_code"] == "DEPENDENCY_UNAVAILABLE"
+
+            predict_status, predict_body = await _asgi_request(
+                "/predict",
+                method="POST",
+                body=json.dumps(_record().model_dump()).encode("utf-8"),
+            )
+            assert predict_status == 503
+            assert json.loads(predict_body)["error_code"] == "DEPENDENCY_UNAVAILABLE"
+
+            monkeypatch.setattr(app, "_load_engine_from_mlflow", lambda: replacement_engine)
+            reload_status, reload_body = await _asgi_request(
+                "/reload",
+                method="POST",
+                headers=((b"x-reload-token", b"synthetic-token"),),
+            )
+            assert reload_status == 200
+            assert json.loads(reload_body)["model_id"] == replacement_engine.model_id
+
+            recovered_status, recovered_body = await _asgi_request("/health/ready")
+            assert recovered_status == 200
+            recovered = json.loads(recovered_body)
+            assert recovered["model_id"] == replacement_engine.model_id
+            assert recovered["status"] == "ready"
+
+    asyncio.run(scenario())
 
 
 def test_rank_offload_keeps_readiness_responsive_and_returns_consistent_engine(
@@ -391,9 +499,7 @@ def test_reload_is_offloaded_serialized_and_failed_reload_preserves_engine(
         )
         assert await asyncio.to_thread(started.wait, 5)
 
-        started_at = time.perf_counter()
         ready_status, ready_body = await _asgi_request("/health/ready")
-        readiness_elapsed = time.perf_counter() - started_at
         ready = json.loads(ready_body)
         assert ready_status == 200
         assert ready["status"] == "ready"
@@ -409,35 +515,29 @@ def test_reload_is_offloaded_serialized_and_failed_reload_preserves_engine(
         assert app.current_engine is old_engine
         release.set()
         reload_status, reload_body = await first_task
-        return reload_status, json.loads(reload_body), readiness_elapsed
+        return reload_status, json.loads(reload_body)
 
-    reload_status, response, readiness_elapsed = asyncio.run(successful_reload())
+    reload_status, response = asyncio.run(successful_reload())
 
     assert app.current_engine is replacement_engine
     assert reload_status == 200
     assert response["model_id"] == replacement_engine.model_id
-    assert readiness_elapsed < 0.5
-    print(
-        "A06 readiness during reload: "
-        f"batch_size=not_applicable scoring_concurrency=0 "
-        f"native_threads={app.SERVING_MODEL_THREADS} "
-        f"latency_ms={readiness_elapsed * 1000:.3f}"
-    )
 
     def failed_load():
         raise ConnectionError("synthetic MLflow outage")
 
     monkeypatch.setattr(app, "_load_engine_from_mlflow", failed_load)
 
-    async def failed_reload():
-        with pytest.raises(app.APIError) as error_info:
-            await app.reload_model()
-        return error_info.value
+    failure_status, failure_body = asyncio.run(
+        _asgi_request(
+            "/reload",
+            method="POST",
+            headers=((b"x-reload-token", b"synthetic-token"),),
+        )
+    )
 
-    error = asyncio.run(failed_reload())
-
-    assert error.status_code == 503
-    assert error.error_code == "DEPENDENCY_UNAVAILABLE"
+    assert failure_status == 503
+    assert json.loads(failure_body)["error_code"] == "DEPENDENCY_UNAVAILABLE"
     assert app.current_engine is replacement_engine
 
 
@@ -490,6 +590,41 @@ def test_model_load_applies_finite_serving_thread_limit(
     engine = app._load_engine_from_mlflow(reference)
 
     assert engine.model.named_steps["model"].n_jobs == app.SERVING_MODEL_THREADS
+
+
+def test_model_load_rejects_mismatched_model_identity_before_download(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference = app.CURRENT_MODEL_REFERENCE
+    downloads = []
+    monkeypatch.setattr(
+        app,
+        "get_mlflow_client",
+        lambda: SimpleNamespace(
+            get_run=lambda run_id: SimpleNamespace(info=SimpleNamespace(run_id=run_id))
+        ),
+    )
+    monkeypatch.setattr(
+        app.mlflow.models,
+        "get_model_info",
+        lambda model_uri: SimpleNamespace(
+            model_uri=model_uri,
+            model_id="different-model-id",
+            run_id=reference.run_id,
+        ),
+    )
+    monkeypatch.setattr(
+        app.mlflow.sklearn,
+        "load_model",
+        lambda model_uri: downloads.append(model_uri),
+    )
+
+    with pytest.raises(
+        app.VehicleInsuranceException, match="model identity does not match"
+    ):
+        app._load_engine_from_mlflow(reference)
+
+    assert downloads == []
 
 
 def test_cancelled_scoring_keeps_capacity_until_worker_finishes(

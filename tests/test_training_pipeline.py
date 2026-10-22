@@ -180,7 +180,9 @@ def test_source_frozen_parity_stage_uses_candidate_artifact_and_applies_lineage(
     report = pipeline.start_source_frozen_parity()
 
     assert report["status"] == "verified"
-    assert report["report_path"].endswith("source_frozen_parity\\parity_report.json")
+    assert Path(report["report_path"]) == (
+        tmp_path.resolve() / "source_frozen_parity" / "parity_report.json"
+    )
     assert captured["candidate_artifact_dir"] == (tmp_path).resolve()
     assert captured["apply_lineage"] is True
     assert captured["log_mlflow_evidence"] is True
